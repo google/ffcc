@@ -1,0 +1,403 @@
+\def\stackengineversionnumber{v3.24}
+\ProvidesPackage{stackengine}
+[2014/01/06 \stackengineversionnumber\
+ Stacking text and objects in convenient ways]
+% This work may be distributed and/or modified under the
+% conditions of the LaTeX Project Public License, either version 1.3
+% of this license or (at your option) any later version.
+% The latest version of this license is in
+%   http://www.latex-project.org/lppl.txt
+% and version 1.3c or later is part of all distributions of LaTeX
+% version 2005/12/01 or later.
+%
+% This work has the LPPL maintenance status `maintained'.
+%
+% The Current Maintainer of this work is Steven B. Segletes.
+%
+% V1.0  -Initial release.
+% V2.0  -Revised syntax, making \Sstackgap=len, \Lstackgap=len syntax
+%        obsolete.  New syntax is \setstackgap{S}{len} and
+%        \setstackgap{L}{len}
+%       -Condensed several routines
+%       -Revised documentation for clarity and to eliminate typos.
+%       -Added \toplap and \bottomlap.
+%       -Disallowed \quietstack for lapping.
+%       -added \abovebaseline
+% V3.0  -Added \stackMath and \stackText macros to treat arguments,
+%        by default, in math mode or not.
+% V3.1  -Added \hsmash, for zero-width, center-aligned argument (note:
+%        other alignments can be achieved with \llap and \rlap)
+%       -Eliminated need for \usepackage{readarray} through the
+%        implementation of \@readMANYrows and \@processROW
+%       -Added [usestackEOL] package option to use \\ separator, rather
+%        than space separator in \Shortstack, \Longstack,
+%        \Shortunderstack, and \Longunderstack
+%       -Implemented \setstackEOL to define new separator in \Shortstack,
+%        \Longstack, \Shortunderstack, and \Longunderstack
+%       -Renamed some package internal variables with @...
+%       -Added \addstackgap to place vertical gap above and below an
+%        existing stack.  Negative gaps have no effect.
+%       -Added \stackinset, deprecates \topinset & \bottominset.
+%       -allow c \stackalignment on \stackinset, \topinset, and
+%        \bottominset to have meaning (rightward offset relative to
+%        centerline, can be positive or negative).
+%       -Forced \useanchorwidth{T} for insets, since otherwise the
+%        stackwidth could vary for reasons not obvious to user.
+%       -Added \strutlongstacks{} mode for auto-adding a strut to
+%        each row of a long stack
+%       -Recommend \strutshortanchors{} mode in preference to
+%        \def\usestackstrut{} definition (now deprecated).
+% V3.11 -Corrected bug in \stackinset which did not condition the
+%        anchor when using vertical centering in \stackMath mode
+% V3.2  -Incorporated changes suggested by E. Gregorio to make robust
+%        the supporting macro \@readMANYrows
+%       -Introduced routines: \Centerstack, \Vectorstack, \parenVectorstack
+%        \bracketVectorstack, \braceVectorstack, \vertvectorstack,
+%        and \ensurestackMath
+% V3.21 -Corrected a bug in \stackinset introduced in V3.11
+% V3.22 -Removed \usepackage{calc}
+%       -Corrected \@STRT placement to not inadvertantly force a \mathop
+%        on rows beginning with a minus sign.
+% V3.23 -Made EOL-separated stacks (i.e., \Longstack, \Shortstack,
+%        \Centerstack, \Vectorstack, etc.) work properly when a single
+%        (unstacked) row is input.
+%       -Noted in documentation that while EOL-separated stacks
+%        ignore leading/trailing spaces in their arguments (unless the
+%        EOL itself is a space token), the \stackon / \stackunder
+%        family of macros do not ignore spaces in their arguments.
+%       -Reinstated \usepackage{calc} (Oops!)
+% V3.24 -Replaced references to \roman with \romannumeral, since \roman
+%        is redefined by packages like spanish babel.
+\RequirePackage{etoolbox}
+\usepackage{calc}
+
+\newtoggle{@doneROWreads}
+\newtoggle{stackloop@done}
+\newcounter{@stackindex}
+\newlength\@boxshift
+\newlength\stack@tmplength
+\newlength\temp@stkl
+\global\newlength\@stackedboxwidth
+\newsavebox\@addedbox
+\newsavebox\@anchorbox
+\newsavebox\stackedbox
+\newsavebox{\@centerbox}
+\newcounter{ROWcellindex@}
+
+%% Following 3 lines thanks to Prof. Enrico Gregorio, from:
+%% http://tex.stackexchange.com/questions/42318/
+\begingroup\lccode`\|=`\\
+\lowercase{\endgroup\def\removebs#1{\if#1|\else#1\fi}}
+\newcommand{\stack@macro@name}[1]{\expandafter\removebs\string#1}
+
+%% Following 3 macros were, in V3.2, made robust with the help of
+%% Prof. Enrico Gregorio.  See:
+%% http://tex.stackexchange.com/questions/137298/
+\newcommand\setstackEOL[1]{%
+  \ifstrempty{#1}{\def\SEP@char{ }}{\def\SEP@char{#1}}%
+  \expandafter\define@processROW\expandafter{\SEP@char}%
+}
+\newcommand\define@processROW[1]{%
+    \def\@processROW##1#1##2||{%
+      \def\@preSEP{##1}%
+      \def\@postSEP{##2}%
+    }%
+}
+% FOR PROCESSING A GROUP OF STACK ROWS SEPARATED BY \SEP@char
+\newcommand\@readMANYrows[1]{%
+  \togglefalse{@doneROWreads}%
+  \edef\@postSEP{\unexpanded{#1}\expandonce{\SEP@char}}%
+  \setcounter{ROWcellindex@}{0}%
+  \whileboolexpr{test {\nottoggle{@doneROWreads}}}{%
+    \stepcounter{ROWcellindex@}%
+    \expandafter\@processROW\@postSEP||%
+    \expandafter\ifstrempty\expandafter{\@postSEP}{%
+      \toggletrue{@doneROWreads}%
+    }{}%
+    \csedef{arg\romannumeral\theROWcellindex@}{\expandonce{\@preSEP}}%
+  }%
+% \narg GIVES HOW MANY ROWS WERE PROCESSED
+  \xdef\narg{\arabic{ROWcellindex@}}%
+}
+%%%%%
+
+% PROCESS PACKAGE OPTIONS
+\newif\ifstackengine@oldsyntax
+\newif\ifstackengine@usestackEOL
+\DeclareOption{oldsyntax}{\stackengine@oldsyntaxtrue}
+\DeclareOption{usestackEOL}{\stackengine@usestackEOLtrue}
+\ProcessOptions\relax
+\ifstackengine@oldsyntax%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%% THIS VERSION 1.0 SYNTAX WAS PHASED OUT %%%%%%%%%%%%%%%%%%%
+%%%%% (but can invoke with \usepackage[oldsyntax]{stackengine} )
+\newlength\Sstackgap\newlength\Lstackgap
+\newcommand\stackgap{\if S\stacktype\the\Sstackgap\else\the\Lstackgap\fi}
+\global\setlength{\Sstackgap}{3pt}
+\global\setlength{\Lstackgap}{\baselineskip}
+\else%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%% AND REPLACED WITH THE FOLLOWING %%%%%%%%%%%%%%%%%%%%%%%%%%
+% Again, thanks to Prof. Gregorio for his lucid explanation that helped
+% improve this package.  See:
+% http://tex.stackexchange.com/questions/123443/
+% defining-a-length-that-scales-with-fontsize-changes/123470#123470
+\newcommand{\setstackgap}[2]{\@namedef{#1stackgap}{#2}}
+\newcommand\stackgap{\@nameuse{\if S\stacktype S\else L\fi stackgap}\relax}
+\setstackgap{S}{3pt}% SHORTSTACKING GAP BETWEEN ITEMS (SAME AS \shortstack)
+\setstackgap{L}{\baselineskip}% LONGSTACKING GAP BETWEEN ITEMS (def. \baselineskip)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\fi
+\ifstackengine@usestackEOL%
+% USE \\ AS SEPERATOR IN \Shortstack, \Longstack,
+% \Shortunderstack, and \Longunderstack
+  \setstackEOL{\\}
+\else
+% USE SPACE TOKEN AS SEPERATOR IN \Shortstack, \Longstack,
+% \Shortunderstack, and \Longunderstack
+  \setstackEOL{ }
+\fi
+
+%%%%% PACKAGE DEFAULT DEFINITIONS
+\def\useanchorwidth{F}% T= FORCE BOX WIDTH TO ANCHOR-WIDTH
+\def\quietstack{F}% T = SUPPRESS OUTPUT OF ALL COMMANDS
+%                   (USE \usebox{\stackedbox} TO RETRIEVE)
+\def\stackalignment{c}% l, c, or r for left, center or right alignment
+\def\stacktype{S}% S for constant gap shortstack;
+                 % L for constant baselineskip longstack
+
+% DEPRECATED USAGE \def\usestackstrut{}; INSTEAD USE \strutshortanchors{}
+%\def\usestackstrut{T}
+
+%%%%% MODES
+\newcommand\stackMath{\global\def\stack@delim{$}}
+\newcommand\stackText{\global\def\stack@delim{}}
+\stackText
+
+\newcommand\strutlongstacks[1]{\def\@strutlongstacks{#1}}
+\strutlongstacks{F}
+
+\newcommand\strutshortanchors[1]{\def\usestackstrut{#1}}
+\strutshortanchors{T}
+
+%%%%% MACROS
+
+%\stackengine{\Sstackgap or \Lstackgap or \stackgap or stacklength}
+%            {anchor}
+%            {item}
+%            {O or U}
+%            {\stackalignment or l or c or r}
+%            {\quietstack or T or F}
+%            {\useanchorwidth or T or F}
+%            {\stacktype or S or L}
+\newcommand*\stackengine[8]{%
+  \def\@STRT{}%
+  \if T\@strutlongstacks\if L#8\def\@STRT{\strut}\fi\fi%
+  \sbox{\stackedbox}{%
+    \sbox{\@anchorbox}{\@STRT\stack@delim#2\stack@delim}%
+    \sbox{\@addedbox}{\@STRT\stack@delim#3\stack@delim}%
+    \settowidth{\@stackedboxwidth}{\@STRT\stack@delim#2\stack@delim}%
+    \if F#7%
+      \ifdim\wd\@addedbox>\@stackedboxwidth%
+        \settowidth{\@stackedboxwidth}{\stack@delim\@STRT#3\stack@delim}%
+      \fi%
+    \fi%
+    \setlength{\@boxshift}{#1}%
+    \if L#8%
+      \if U#4%
+        \setlength{\@boxshift}{-\@boxshift}%
+      \fi%
+    \else%
+      \if U#4%
+        \setlength{\@boxshift}{-\dp\@anchorbox -\ht\@addedbox -\@boxshift}%
+      \else%
+        \setlength{\@boxshift}{\ht\@anchorbox +\dp\@addedbox +\@boxshift}%
+      \fi%
+    \fi%
+    \if c#5%
+      \hspace{.5\@stackedboxwidth}%
+      \hspace{-.5\wd\@anchorbox}%
+      \usebox{\@anchorbox}%
+      \hspace{-.5\wd\@anchorbox}%
+      \hspace{-.5\wd\@addedbox}%
+      \raisebox{\@boxshift}{\@STRT\stack@delim#3\stack@delim}%
+      \hspace{-.5\wd\@addedbox}%
+      \hspace{.5\@stackedboxwidth}%
+    \else%
+      \if l#5%
+        \usebox{\@anchorbox}%
+        \hspace{-\wd\@anchorbox}%
+        \raisebox{\@boxshift}{\@STRT\stack@delim#3\stack@delim}%
+        \hspace{-\wd\@addedbox}%
+        \hspace{\@stackedboxwidth}%
+      \else%
+        \if r#5%
+          \hspace{\@stackedboxwidth}%
+          \hspace{-\wd\@anchorbox}%
+          \usebox{\@anchorbox}%
+          \hspace{-\wd\@addedbox}%
+          \raisebox{\@boxshift}{\@STRT\stack@delim#3\stack@delim}%
+        \fi%
+      \fi%
+    \fi%
+  }%
+  \if F#6\usebox{\stackedbox}\fi%
+}
+
+\newcommand*\stackunder[3][\stackgap]{\stackengine%
+  {#1}{#2}{#3}{U}{\stackalignment}{\quietstack}{\useanchorwidth}{\stacktype}}
+
+\newcommand*\stackon[3][\stackgap]{\stackengine%
+  {#1}{#2}{#3}{O}{\stackalignment}{\quietstack}{\useanchorwidth}{\stacktype}}
+
+\newcommand*\Shortstack[2][\stackalignment]{\@stack{#1}{#2}{O}{S}}
+
+\newcommand*\Longstack[2][\stackalignment]{\@stack{#1}{#2}{O}{L}}
+
+\newcommand*\Shortunderstack[2][\stackalignment]{\@stack{#1}{#2}{U}{S}}
+
+\newcommand*\Longunderstack[2][\stackalignment]{\@stack{#1}{#2}{U}{L}}
+
+\newcommand*\@stack[4]{%
+  \@readMANYrows{#2}%
+  \if U#3%
+    \setcounter{@stackindex}{\narg}%
+    \def\@stacksign{-}%
+    \def\@stackcondition{\the@stackindex > 1}%
+  \else%
+    \setcounter{@stackindex}{1}%
+    \def\@stacksign{}%
+    \def\@stackcondition{\the@stackindex < \narg}%
+  \fi%
+  \def\@STRT{}%
+  \if T\@strutlongstacks\if L#4\def\@STRT{\strut}\fi\fi%
+  \sbox{\stackedbox}{%
+    \@STRT\stack@delim\ignorespaces%
+      \csname arg\romannumeral\the@stackindex\endcsname%
+    \unskip\stack@delim}%
+  \ifnum\narg>1%
+    \togglefalse{stackloop@done}%
+  \else%
+    \toggletrue{stackloop@done}%
+  \fi%
+  \whileboolexpr{test {\nottoggle{stackloop@done}}}{%
+    \addtocounter{@stackindex}{\@stacksign 1}%
+    \stackengine{\csname#4stackgap\endcsname}%
+      {\ignorespaces\csname arg\romannumeral\the@stackindex\endcsname\unskip}%
+      {\usebox{\stackedbox}}{#3}{#1}{T}{\useanchorwidth}{#4}%
+    \ifnum\@stackcondition\else\toggletrue{stackloop@done}\fi%
+  }%
+  \if F\quietstack\usebox{\stackedbox}\fi%
+}
+
+% PERHAPS THESE SIX MACROS CAN BE REPLACED BY \toplap AND \bottomlap
+\newcommand*\tllap[2][\Lstackgap]{\@stacklap{#1}{l}{#2}{O}}
+\newcommand*\tclap[2][\Lstackgap]{\@stacklap{#1}{c}{#2}{O}}
+\newcommand*\trlap[2][\Lstackgap]{\@stacklap{#1}{r}{#2}{O}}
+\newcommand*\bllap[2][\Lstackgap]{\@stacklap{#1}{l}{#2}{U}}
+\newcommand*\bclap[2][\Lstackgap]{\@stacklap{#1}{c}{#2}{U}}
+\newcommand*\brlap[2][\Lstackgap]{\@stacklap{#1}{r}{#2}{U}}
+
+\newcommand*\toplap[3][\Lstackgap]{\@stacklap{#1}{#2}{#3}{O}}
+\newcommand*\bottomlap[3][\Lstackgap]{\@stacklap{#1}{#2}{#3}{U}}
+
+\newcommand*\@stacklap[4]{%
+  \if l#2\stackengine{#1}{}{#3}{#4}{r}{F}{T}{L}\else%
+    \if r#2\stackengine{#1}{}{#3}{#4}{l}{F}{T}{L}\else%
+      \stackengine{#1}{}{#3}{#4}{c}{F}{T}{L}%
+    \fi%
+  \fi
+}
+
+\newcommand*\hsmash[1]{\stackengine{0pt}{}{#1}{O}{c}{F}{T}{L}}
+
+\newcommand*\stackanchor[3][\stackgap]{%
+  \setlength{\stack@tmplength}{#1}%
+  \setlength{\stack@tmplength}{.5\stack@tmplength}%
+  \if T\usestackstrut%
+    \if S\stacktype\addtolength{\stack@tmplength}%
+       {.5\ht\strutbox-.5\dp\strutbox}\fi%
+  \fi%
+  \stackengine{\stack@tmplength}{}{#2}{O}{\stackalignment}{T}{F}{\stacktype}%
+  \if T\usestackstrut%
+    \if S\stacktype\addtolength{\stack@tmplength}%
+       {-\ht\strutbox+\dp\strutbox}\fi%
+  \fi%
+  \stackengine{\stack@tmplength}{\usebox{\stackedbox}}{#3}{U}%
+              {\stackalignment}{\quietstack}{F}{\stacktype}%
+}
+
+\newcommand*\abovebaseline[2][\stackgap]{%
+  \stackengine{#1}{}{#2}{O}{\stackalignment}{\quietstack}{F}{\stacktype}}
+
+\newcommand*\belowbaseline[2][\stackgap]{%
+  \stackengine{#1}{}{#2}{U}{\stackalignment}{\quietstack}{F}{\stacktype}}
+
+\newcommand*\savestack[2]{%
+  \global\edef\sv@name{\stack@macro@name{#1}}%
+  \@ifundefined{\sv@name content}{%
+    \expandafter\newsavebox\expandafter{\csname\sv@name content\endcsname}%
+   }{}%
+  \expandafter\sbox\csname\sv@name content\endcsname{#2}%
+  \protected@edef#1{\usebox{\csname\sv@name content\endcsname}}%
+}
+
+\newcommand*\addstackgap[2][\Sstackgap]{\stackengine{#1}{%
+  \stackengine{#1}{#2}{}{O}{c}{\quietstack}{T}{S}}{}{U}{c}{\quietstack}{T}{S}}
+
+\newcommand*\topinset[4]{\stackinset{\stackalignment}{#4}{t}{#3}{#1}{#2}}
+
+\newcommand*\bottominset[4]{\stackinset{\stackalignment}{#4}{b}{#3}{#1}{#2}}
+
+%\stackinset{l/c/r}{x}{b/c/t}{y}{inset}{anchor}
+\newcommand*\stackinset[6]{%
+  \def\conditioned@inset{\stack@delim#5\stack@delim}%
+  \def\conditioned@anchor{\stack@delim#6\stack@delim}%
+  \ifstrequal{#4}{}%
+    {\setlength{\stack@tmplength}{0pt}}%
+    {\setlength{\stack@tmplength}{#4}}%
+  \if c#3%
+    \setlength{\temp@stkl}{%
+      \heightof{\conditioned@anchor}+\depthof{\conditioned@anchor}%
+      -\heightof{\conditioned@inset}-\depthof{\conditioned@inset}}%
+    \addtolength{\stack@tmplength}{.5\temp@stkl}%
+  \fi%
+  \ifstrequal{#2}{}{\def\stack@tmp{0pt}}{\def\stack@tmp{#2}}%
+  \def\stack@lroffset{\rule{\stack@tmp}{0pt}}%
+  \addtolength{\stack@tmplength}{%
+    \heightof{\conditioned@inset}+\depthof{\conditioned@inset}}%
+  \if c#1%
+    \def\conditioned@inset{\stack@lroffset\stack@lroffset#5}%
+  \else%
+    \def\conditioned@inset{\stack@lroffset#5\stack@lroffset}%
+  \fi%
+  \stackengine{-\stack@tmplength}{#6}{\conditioned@inset}%
+              {\inset@valign{#3}}{#1}{\quietstack}{T}{S}%
+}
+
+\def\inset@valign#1{\if t#1O\else U\fi}
+
+\newcommand\Centerstack[2][\stackalignment]{%
+  \sbox{\@centerbox}{\strutlongstacks{T}\Longstack[#1]{#2}}%
+  \raisebox{-.5\ht\@centerbox+.5\ht\strutbox}{\usebox{\@centerbox}}}
+
+\newcommand\Vectorstack[2][\stackalignment]{%
+  \ensurestackMath{\Centerstack[#1]{#2}}}
+
+\newcommand\parenVectorstack[2][\stackalignment]{%
+  \ensurestackMath{\left(\Centerstack[#1]{#2}\right)}}
+
+\newcommand\bracketVectorstack[2][\stackalignment]{%
+  \ensurestackMath{\left[\Centerstack[#1]{#2}\right]}}
+
+\newcommand\braceVectorstack[2][\stackalignment]{%
+  \ensurestackMath{\left\{\Centerstack[#1]{#2}\right\}}}
+
+\newcommand\vertVectorstack[2][\stackalignment]{%
+  \ensurestackMath{\left|\Centerstack[#1]{#2}\right|}}
+
+\newcommand\ensurestackMath[1]{%
+  \let\sv@stackmode\stack@delim\stackMath%
+  #1\global\let\stack@delim\sv@stackmode}
+
+\endinput
