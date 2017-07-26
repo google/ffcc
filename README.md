@@ -1,6 +1,6 @@
 # Fast Fourier Color Constancy Matlab Toolbox
 
-The Fast Fourier Color Constancy (FFCC) Matlab Toolbox consists the following functionalities:
+The Fast Fourier Color Constancy (FFCC) Matlab Toolbox includes the following functionalities:
 
 *  Tune() - Cross-validation and parameter tuning.
 *  Train() - Training.
@@ -35,7 +35,7 @@ spec.
 
 #### Global Illuminant
 
-The text file descibes the color of global illuminant. It looks like this:
+The text file descibes the color of the global illuminant. It looks like this:
 
 ```
 0.500249
@@ -43,8 +43,8 @@ The text file descibes the color of global illuminant. It looks like this:
 0.278876
 ```
 
-The equation to convert between white balance gain to the color of illuminant is
-as follow:
+The equation to convert between white balance gain and the color of illuminant is
+as follows:
 
 $$
 L = z / |z|
@@ -55,8 +55,8 @@ where \\(z = [1/R_{gain}, 1/G_{gain}, 1/B_{gain}]\\).
 ### Project Folder
 
 To allow FFCC Toolbox to support wide range of projects, we separate out the
-core algorithms from the project specific implementation. The project specific
-implementation is placed under projects/ folder.
+core algorithms from the project specific implementations. The project specific
+implementations are placed under projects/ folder.
 
 The following scripts all take as input the string of some project name, which
 must correspond exactly to a folder in projects/, and which must prefix all
@@ -86,7 +86,7 @@ vonmises_nll.q95 = 1.8778
 The first element of each printed label is a kind of error measure, and the
 second element is a surface statistic on that error metric. Please see
 CrossValidate.m and ErrorMetrics.m for detailed descriptions.
-angular_err less than 2 degrees are not perceivible, and vonmisses_nll is
+An angular_err less than 2 degrees is not perceptible, and vonmisses_nll is
 is measured in negative-nats for an individual training point. If the error is
 more than 2 degrees, you might consider:
 
@@ -98,7 +98,7 @@ more than 2 degrees, you might consider:
   different lighting conditions, instead of heavily favoring one particular
   group.
 
-You could read further tuning description in Tune.m or CrossValidate.m
+You can read further tuning description in Tune.m or CrossValidate.m
 
 ### Training
 Once Tune() is producing reasonable cross-validation results, use Train()
