@@ -157,7 +157,8 @@ for i_data = 1:length(data)
         CCM = params.SENSOR.CCM;
       end
 
-      if ~isempty(data(i_data).original_filename)
+      if ~isempty(data(i_data).original_filename) ...
+          && exist(data(i_data).original_filename)
         I_linear = ReadImage(data(i_data).original_filename);
       else
         I_linear = imread(data(i_data).filename);

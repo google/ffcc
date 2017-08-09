@@ -69,7 +69,7 @@ if strfind(image_filename, '/shi_gehler/')
   % .mat file which is indexed on the order of the image in its folder, and so
   % this code may break if run on a filesystem which sorts images arbitrarily.
   illuminants_filename = ...
-    fullfile(gehlershi_folder, 'groundtruth/real_illum_568.mat');
+    fullfile(gehlershi_folder, 'real_illum_568.mat');
   illuminants = load(illuminants_filename);
   dirents = dir(fullfile(paths.gehler_shi, 'images'));
   dirents = {dirents.name};
@@ -83,7 +83,7 @@ if strfind(image_filename, '/shi_gehler/')
 
   % The mask for the color checker is encoded as the (weirdly scaled)
   % coordinates of the corners of the color checker.
-  coordinates_folder = fullfile(gehlershi_folder, 'groundtruth/coordinates/');
+  coordinates_folder = fullfile(gehlershi_folder, 'coordinates/');
   cc_coord = load(fullfile(coordinates_folder, [root_filename '_macbeth.txt']));
   scale = cc_coord(1, [2 1]) ./ [size(image,1) size(image,2)];
   mask = ~roipoly(image, ...

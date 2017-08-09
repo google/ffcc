@@ -17,13 +17,13 @@ function params = PrivateConstants
 % different projects.
 
 % The location of the learned models, used by Train().
-params.TRAINING.OUTPUT_MODEL_FOLDER = '~/tmp/awb_models/';
+params.TRAINING.OUTPUT_MODEL_FOLDER = 'models/';
 warning off all
 system(['mkdir ', params.TRAINING.OUTPUT_MODEL_FOLDER, ' &> /dev/null']);
 warning on all;
 
 % The location of visualizations of each model, used by Visualize().
-params.TRAINING.OUTPUT_VISUALIZATION_ROOT = '~/tmp/awb_vis/';
+params.TRAINING.OUTPUT_VISUALIZATION_ROOT = 'vis/';
 warning off all
 system(['mkdir ', params.TRAINING.OUTPUT_VISUALIZATION_ROOT, ' &> /dev/null']);
 warning on all;

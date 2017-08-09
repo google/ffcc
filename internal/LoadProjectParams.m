@@ -19,10 +19,10 @@ function params = LoadProjectParams(project_name)
 % project yet, in which case we use the default values specified in
 % DefaultHyperparameters.m
 
-% This function might get called from the root /matlab/ folder or by
-% the /matlab/scripts/ subfolder, so we need to handle both cases.
+% This function might get called from the root /ffcc/ folder or by
+% the /ffcc/scripts/ subfolder, so we need to handle both cases.
 cur_dir = pwd;
-if strcmp(cur_dir((find(cur_dir == '/', 1, 'last')+1):end), 'matlab')
+if strcmp(cur_dir((find(cur_dir == '/', 1, 'last')+1):end), 'ffcc')
   projects_dir = './projects';
 else
   projects_dir = '../projects';

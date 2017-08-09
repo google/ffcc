@@ -1,10 +1,16 @@
 # Fast Fourier Color Constancy Matlab Toolbox
 
-The Fast Fourier Color Constancy (FFCC) Matlab Toolbox includes the following functionalities:
+The Fast Fourier Color Constancy (FFCC) Matlab Toolbox includes the following
+functionalities:
 
 *  Tune() - Cross-validation and parameter tuning.
 *  Train() - Training.
 *  Visualize() - Visualizing cross-validation or training/test performance.
+
+This code depends on the "minFunc" library from Mark Schmidt:
+https://www.cs.ubc.ca/~schmidtm/Software/minFunc.html
+Either add this to the path manually or place it inside the root /ffcc/
+directory.
 
 ## Training & Cross Validation
 
@@ -25,6 +31,8 @@ The training folder structure should look similar to the following:
 
 The script will parse down the subfolders and look for *.png and *.txt files,
 which corresponds to the linear thumbnail and the color of global illuminant.
+This data has been provided for the Gehler-Shi dataset, alongside a script
+for generating this data "from scratch" (see /ffcc/data/).
 
 #### Linear Thumbnail
 

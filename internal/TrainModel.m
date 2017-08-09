@@ -15,7 +15,7 @@
 function [models, train_metadata, params] = TrainModel(data, params)
 % Read in training data and parameters, return the calibrated new models.
 
-addpath(genpath('../../../../../third_party/matlab/minFunc'));
+addpath(genpath('./minFunc'));
 addpath(genpath('./lib_fft'))
 addpath(genpath('./lib_flatten'))
 
