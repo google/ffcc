@@ -35,11 +35,7 @@ spec.
 
 #### Global Illuminant
 
-<<<<<<< HEAD
-The text file descibes the color of global illuminant. It looks like this:
-=======
 The text file descibes the color of the global illuminant. It looks like this:
->>>>>>> 19800605cae910e89df3e8182f1eb01c966679bd
 
 ```
 0.500249
@@ -47,13 +43,8 @@ The text file descibes the color of the global illuminant. It looks like this:
 0.278876
 ```
 
-<<<<<<< HEAD
-The equation to convert between white balance gain to the color of illuminant is
-as follow:
-=======
 The equation to convert between white balance gain and the color of illuminant is
 as follows:
->>>>>>> 19800605cae910e89df3e8182f1eb01c966679bd
 
 $$
 L = z / |z|
