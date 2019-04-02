@@ -29,7 +29,7 @@ if iscell(folder)
 
 else
 
-  rng(0)
+  rng('default')
 
   print_name = folder(1+find(folder(1:end-1) == '/', 1, 'last'):end);
 
