@@ -272,7 +272,7 @@ def featurize_image(rgb, params, mask=None):
 
     first_bin = tf.convert_to_tensor(params['first_bin'], dtype=tf.float32)
     bin_size = tf.convert_to_tensor(params['bin_size'], dtype=tf.float32)
-    nbins = tf.convert_to_tensor(params['nbins'], dtype=tf.int64)
+    nbins = tf.convert_to_tensor(params['nbins'], dtype=tf.int32)
 
     # Exclude any zero pixels (at any color channel)
     nonzero_r = tf.gather_nd(tf.expand_dims(rgb[:, :, :, 0], axis=3),
@@ -287,12 +287,13 @@ def featurize_image(rgb, params, mask=None):
     u = log_g - tf.log(nonzero_r)
     v = log_g - tf.log(nonzero_b)
     ub = tf.cast(tf.math.floormod(tf.round((u - first_bin) / bin_size),
-                                  tf.cast(nbins, tf.float32)), tf.int64)
+                                  tf.cast(nbins, tf.float32)), tf.int32)
     vb = tf.cast(tf.math.floormod(tf.round((v - first_bin) / bin_size),
-                                  tf.cast(nbins, tf.float32)), tf.int64)
-    indices = sub2ind([nbins, nbins], ub, vb).numpy()
-    N = tf.cast(tf.reshape(np.bincount(indices, minlength=nbins * nbins),
+                                  tf.cast(nbins, tf.float32)), tf.int32)
+    indices = sub2ind([nbins, nbins], ub, vb)
+    N = tf.cast(tf.reshape(tf.math.bincount(indices, minlength=nbins * nbins),
                            [nbins, nbins]), dtype=tf.float32)
+
     N = N / tf.math.maximum(EPS, tf.reduce_sum(N))
     return N
 
