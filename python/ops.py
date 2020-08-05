@@ -48,7 +48,7 @@ def c2r(comp):
 
 
 def r2c_fft2(x):
-  """Apply 2D-FFT over a real multi-dimensional tensor.
+    """Apply 2D-FFT over a real multi-dimensional tensor.
 
   Args:
     x: A tensor in real number. The rank of the tensor is == 4.
@@ -125,15 +125,8 @@ def masked_local_absolute_deviation(rgb, mask=None):
             # mask = tf.image.rgb_to_grayscale(mask)
             mask = tf.expand_dims(tf.reduce_sum(mask, axis=3) / 3, axis=3)
 
-        else:
-            mask = tf.squeeze(mask, axis=3)
-
         if mask.dtype is not tf.float32:
             mask = tf.cast(mask, dtype=tf.float32)
-
-    else:
-        mask = tf.convert_to_tensor(np.ones(np.concatenate((rgb.shape[:-1], [1]))),
-                                    dtype=tf.float32)
 
     # Padding the image and the mask (if given) before computing the image's edges
     target_size = [rgb.shape[1] + 2, rgb.shape[2] + 2]
@@ -143,12 +136,19 @@ def masked_local_absolute_deviation(rgb, mask=None):
     rgb_padded[:, -1, :, :].assign(rgb_padded[:, -2, :, :])
     rgb_padded[:, :, 0, :].assign(rgb_padded[:, :, 1, :])
     rgb_padded[:, :, -1, :].assign(rgb_padded[:, :, -2, :])
-    masked_padded = tf.Variable(tf.image.pad_to_bounding_box(
-        mask, 1, 1, target_size[0], target_size[1]), dtype=tf.float32)
-    masked_padded[:, 0, :, :].assign(masked_padded[:, 1, :, :])
-    masked_padded[:, -1, :, :].assign(masked_padded[:, -2, :, :])
-    masked_padded[:, :, 0, :].assign(masked_padded[:, :, 1, :])
-    masked_padded[:, :, -1, :].assign(masked_padded[:, :, -2, :])
+
+    # Make unwanted pixels' values = zeros
+    if mask is not None:
+        masked_padded = tf.Variable(tf.image.pad_to_bounding_box(
+            mask, 1, 1, target_size[0], target_size[1]), dtype=tf.float32)
+        masked_padded[:, 0, :].assign(masked_padded[:, 1, :])
+        masked_padded[:, -1, :].assign(masked_padded[:, -2, :])
+        masked_padded[:, :, 0].assign(masked_padded[:, :, 1])
+        masked_padded[:, :, -1].assign(masked_padded[:, :, -2])
+        for c in range(rgb_padded.shape[-1]):
+            rgb_padded[:, :, :, c].assign(tf.math.multiply(rgb_padded[:, :, :, c],
+                                                           tf.squeeze(masked_padded,
+                                                                      axis=3)))
 
     # Applying a serious of conv filters to compute the absolute deviation in
     # the input image
@@ -157,18 +157,19 @@ def masked_local_absolute_deviation(rgb, mask=None):
         for f in range(edge_filters.shape[2]):
             rgb_edge[:, :, :, c].assign(
                 rgb_edge[:, :, :, c] + tf.squeeze(tf.abs(
-                    tf.nn.conv2d(tf.math.multiply(
-                        tf.expand_dims(rgb_padded[:, :, :, c], axis=3),
-                        masked_padded),
-                        filter=tf.expand_dims(edge_filters[:, :, f, :], axis=2),
-                        strides=1, padding='VALID'))))
+                    tf.nn.conv2d(tf.expand_dims(rgb_padded[:, :, :, c], axis=3),
+                                 filter=tf.expand_dims(edge_filters[:, :, f, :],
+                                                       axis=2),
+                                 strides=1, padding='VALID'))))
     rgb_edge = rgb_edge / 8
 
     # Create a mask for the edge image
     nonzeros_inds = tf.not_equal(tf.expand_dims(tf.reduce_sum(
         rgb_edge, axis=3), axis=3), tf.constant(0, dtype=tf.float32))
-    mask_edge = tf.where(nonzeros_inds, tf.ones(mask.shape, dtype=tf.float32),
-                         tf.zeros(mask.shape, dtype=tf.float32))
+    mask_edge = tf.where(nonzeros_inds, tf.ones(
+        np.concatenate([rgb_edge.shape[:-1], [1]]), dtype=tf.float32),
+                         tf.zeros(np.concatenate(
+                             [rgb_edge.shape[:-1], [1]]), dtype=tf.float32))
 
     return rgb_edge, mask_edge
 
