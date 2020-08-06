@@ -21,6 +21,62 @@ import tensorflow.compat.v1 as tf
 EPS = tf.cast(tf.keras.backend.epsilon(), dtype=tf.float32)
 
 
+def padding_img(rgb, target_size):
+    rgb_padded = tf.Variable(tf.image.pad_to_bounding_box(
+        rgb, 1, 1, target_size[0], target_size[1]), dtype=tf.float32)
+    rgb_padded[:, 0, :, :].assign(rgb_padded[:, 1, :, :])
+    rgb_padded[:, -1, :, :].assign(rgb_padded[:, -2, :, :])
+    rgb_padded[:, :, 0, :].assign(rgb_padded[:, :, 1, :])
+    rgb_padded[:, :, -1, :].assign(rgb_padded[:, :, -2, :])
+    return rgb_padded
+
+
+def assert_params(params):
+    """"Assert params"""
+    assert ("first_bin" in params and
+            "bin_size" in params and "nbins" in params), \
+        "The given params does not have all required keys, which should be: " \
+        "'first_bin', 'bin_size', and 'nbins'"
+
+    assert isinstance(params['first_bin'], float), \
+        "params['first_bin'] should be float"
+    assert isinstance(params['bin_size'], float), \
+        "params['bin_size'] should be float"
+    assert isinstance(params['nbins'], int), \
+        "params['nbins'] should be int"
+
+    assert (params['bin_size'] > 0), "params['bin_size'] should be greater " \
+                                     "than zero"
+    assert (params['nbins'] > 0), "params['nbins'] should be greater than " \
+                                  "zero"
+
+
+def assert_rgb(rgb):
+    """"Assert rgb image"""
+    tf.assert_equal(len(rgb.shape), 4,
+                    message='Input image should be in the shape of ' +
+                            '[batch_size, height, width, channels]; ' +
+                            'the given image has the shape of %s.' % rgb.shape)
+
+    tf.assert_equal(tf.less_equal(tf.reduce_max(rgb), 1.0) and
+                    tf.greater_equal(tf.reduce_max(rgb), 0.), True,
+                    message='Image values should be in the range [0, 1]')
+
+
+def assert_mask(mask, rgb_shape):
+    """"Assert mask based on the target rgb_shape"""
+    tf.assert_equal(mask.shape[:-1], rgb_shape,
+                    message='The given mask should have the same ' +
+                            'dimensions of the given image (except ' +
+                            'for the color channel). The given rgb' +
+                            ' image has a shape of %s, while' % rgb_shape +
+                            ' the mask has a shape of %s.' % mask.shape)
+
+    tf.assert_equal(tf.equal(tf.reduce_max(mask), 1.0) or
+                    tf.equal(tf.reduce_max(mask), 0.), True,
+                    message='Mask values should be either ones or zeros')
+
+
 def edge_kernel():
     """Construct a set of 3x3 kernels for edge computation."""
     filters = np.zeros((3, 3, 8, 1))
@@ -42,6 +98,7 @@ edge_filters = edge_kernel()
 def sub2ind(arr_shape, r, c):
     """Convert subscripts to linear indices"""
     return r * arr_shape[1] + c
+
 
 def r2c(real):
     """Real to complex."""
@@ -110,26 +167,12 @@ def masked_local_absolute_deviation(rgb, mask=None):
     that have at least zero in any of its color channels.
   """
 
-    tf.assert_equal(len(rgb.shape), 4,
-                    message='Input image should be in the shape of ' +
-                            '[batch_size, height, width, channels]; ' +
-                            'the given image has the shape of %s.' % rgb.shape)
-
     if rgb.dtype is not tf.float32:
         rgb = tf.cast(rgb, dtype=tf.float32)
 
-    tf.assert_equal(tf.less_equal(tf.reduce_max(rgb), 1.0) and
-                    tf.greater_equal(tf.reduce_max(rgb), 0.), True,
-                    message='Image values should be in the range [0, 1]')
+    assert_rgb(rgb)
 
     if mask is not None:
-        tf.assert_equal(mask.shape[:-1], rgb.shape[:-1],
-                        message='The given mask should have the same ' +
-                                'dimensions of the given image (except ' +
-                                'for the color channel). The given rgb' +
-                                ' image has a shape of {rgb.shape}, while' +
-                                ' the mask has a shape of %s.' % mask.shape)
-
         if mask.shape[-1] > 1:
             # mask = tf.image.rgb_to_grayscale(mask)
             mask = tf.expand_dims(tf.reduce_sum(mask, axis=3) / 3, axis=3)
@@ -141,27 +184,22 @@ def masked_local_absolute_deviation(rgb, mask=None):
                         tf.equal(tf.reduce_max(mask), 0.), True,
                         message='Mask values should be either ones or zeros')
 
+        assert_mask(mask, rgb.shape[:-1])
+
     # Padding the image and the mask (if given) before computing the image's
     # edges
     target_size = [rgb.shape[1] + 2, rgb.shape[2] + 2]
-    rgb_padded = tf.Variable(tf.image.pad_to_bounding_box(
-        rgb, 1, 1, target_size[0], target_size[1]), dtype=tf.float32)
-    rgb_padded[:, 0, :, :].assign(rgb_padded[:, 1, :, :])
-    rgb_padded[:, -1, :, :].assign(rgb_padded[:, -2, :, :])
-    rgb_padded[:, :, 0, :].assign(rgb_padded[:, :, 1, :])
-    rgb_padded[:, :, -1, :].assign(rgb_padded[:, :, -2, :])
+    rgb_padded = padding_img(rgb, target_size)
 
     # Make untrusted pixels' values = zeros
     if mask is not None:
-        masked_padded = tf.Variable(tf.image.pad_to_bounding_box(
-            mask, 1, 1, target_size[0], target_size[1]), dtype=tf.float32)
-        masked_padded[:, 0, :].assign(masked_padded[:, 1, :])
-        masked_padded[:, -1, :].assign(masked_padded[:, -2, :])
-        masked_padded[:, :, 0].assign(masked_padded[:, :, 1])
-        masked_padded[:, :, -1].assign(masked_padded[:, :, -2])
+        # Padding the mask
+        padded_maske = tf.squeeze(padding_img(tf.expand_dims(mask, axis=3),
+                                              target_size), axis=3)
+        # Mask out unwanted pixels
         for c in range(rgb_padded.shape[-1]):
             rgb_padded[:, :, :, c].assign(tf.math.multiply(
-                rgb_padded[:, :, :, c], tf.squeeze(masked_padded, axis=3)))
+                rgb_padded[:, :, :, c], tf.squeeze(padded_maske, axis=3)))
 
     # Applying a serious of conv filters to compute the absolute deviation in
     # the input image
@@ -187,90 +225,44 @@ def masked_local_absolute_deviation(rgb, mask=None):
     return rgb_edge, mask_edge
 
 
-def featurize_image(rgb, params, mask=None):
-    """Produces 2D histogram of the log-chroma of the image.
 
-    This functions produces a 2D histogram of the log-chroma of a given image.
-    The function accepts an optional mask that indicates which pixels are to be
-    trusted in that image.
+def compute_chroma_histogram(rgb, mask, params):
+    """Main function of histogram computation.
 
-    Args:
-      rgb: RGB image (float32) with the shape of [batch_size, height, width,
-        channels].
-      params: a dict with keys:
-      'first_bin': (float) location of the edge of the first histogram bin.
-      'bin_size': (float) size of each histogram bin.
-      'nbins': (int) number of histogram bins.
-      mask (optional): a 2D tensor (float32) with pixels == 1.0 to select which
-      pixels are considered in the computation.
-      The mask's height and width should be equal to the height and width of
-      the given image. If not given, a mask will be constructed to avoid any
-      pixel with zero value in any channel of the given image.
+     This functions produces a 2D histogram of the log-chroma of a given image.
+     The function accepts an optional mask that indicates which pixels are to be
+     trusted in that image.
 
-    Returns:
-      N: a 2D histogram (float32) of the log-chroma of a given image with
-      the shape of [batch_size, height, width, channels]
-    """
+     Args:
+       rgb: RGB image (float32) with the shape of [batch_size, height, width,
+         channels].
+       mask: a 2D tensor (float32) with pixels == 1.0 to select which
+       pixels are considered in the computation.
+       The mask's height and width should be equal to the height and width of
+       the given image. If not given, a mask will be constructed to avoid any
+       pixel with zero value in any channel of the given image.
+       params: a dict with keys:
+       'first_bin': (float) location of the edge of the first histogram bin.
+       'bin_size': (float) size of each histogram bin.
+       'nbins': (int) number of histogram bins.
 
-    tf.assert_equal(len(rgb.shape), 4,
-                    message='Input image should be in the shape of ' +
-                            '[batch_size, height, width, channels]; ' +
-                            'the given image has the shape of %s.' % rgb.shape)
-
+     Returns:
+       N: a 2D histogram (float32) of the log-chroma of a given image with
+       the shape of [batch_size, height, width, channels]
+     """
     if rgb.dtype is not tf.float32:
         rgb = tf.cast(rgb, dtype=tf.float32)
+        assert_rgb(rgb)
 
-    tf.assert_equal(tf.less_equal(tf.reduce_max(rgb), 1.0) and
-                    tf.greater_equal(tf.reduce_max(rgb), 0.), True,
-                    message='Image values should be in the range [0, 1]')
+    if mask.shape[-1] > 1:
+        mask = tf.expand_dims(tf.reduce_sum(mask, axis=3) / 3, axis=3)
 
-    if mask is not None:
-        tf.assert_equal(mask.shape[:-1], rgb.shape[:-1],
-                        message='The given mask should have the same ' +
-                                'dimensions of the given image (except ' +
-                                'for the color channel). The given rgb' +
-                                ' image has a shape of {rgb.shape}, while' +
-                                ' the mask has a shape of %s.' % mask.shape)
+    if mask.dtype is not tf.float32:
+        mask = tf.cast(mask, dtype=tf.float32)
 
-        if mask.shape[-1] > 1:
-            # mask = tf.image.rgb_to_grayscale(mask)
-            mask = tf.expand_dims(tf.reduce_sum(mask, axis=3) / 3, axis=3)
-
-        if mask.dtype is not tf.float32:
-            mask = tf.cast(mask, dtype=tf.float32)
-
-        tf.assert_equal(tf.equal(tf.reduce_max(mask), 1.0) or
-                        tf.equal(tf.reduce_max(mask), 0.), True,
-                        message='Mask values should be either ones or zeros')
-
-    else:
-        nonzeros_inds = tf.not_equal(tf.expand_dims(tf.math.reduce_prod(
-            rgb, axis=3), axis=3), tf.constant(0, dtype=tf.float32))
-        mask = tf.where(nonzeros_inds, tf.ones(
-            np.concatenate([rgb.shape[:-1], [1]]), dtype=tf.float32),
-                             tf.zeros(np.concatenate(
-                                 [rgb.shape[:-1], [1]]), dtype=tf.float32))
-
-    tf.assert_equal(tf.less_equal(tf.reduce_max(mask), 1.0) and
-                    tf.greater_equal(tf.reduce_max(mask), 0.), True,
-                    message='Mask values should be either ones or zeros')
-
-    assert ("first_bin" in params and
-            "bin_size" in params and "nbins" in params), \
-        "The given params does not have all required keys, which should be: " \
-        "'first_bin', 'bin_size', and 'nbins'"
-
-    assert isinstance(params['first_bin'], float), \
-        "params['first_bin'] should be float"
-    assert isinstance(params['bin_size'], float), \
-        "params['bin_size'] should be float"
-    assert isinstance(params['nbins'], int), \
-        "params['nbins'] should be int"
-
-    assert (params['bin_size'] > 0), "params['bin_size'] should be greater " \
-                                     "than zero"
-    assert (params['nbins'] > 0), "params['nbins'] should be greater than " \
-                                  "zero"
+    assert_rgb(rgb)
+    assert_mask(mask, rgb.shape[:-1])
+    assert_params(params)
 
     first_bin = tf.convert_to_tensor(params['first_bin'], dtype=tf.float32)
     bin_size = tf.convert_to_tensor(params['bin_size'], dtype=tf.float32)
@@ -299,7 +291,63 @@ def featurize_image(rgb, params, mask=None):
         indices = sub2ind([nbins, nbins], ub, vb)
         N[i, :, :, :].assign(tf.cast(tf.reshape(tf.math.bincount(
             indices, minlength=nbins * nbins), [nbins, nbins, 1]), dtype=tf.float32))
-        N[i, :, :, :].assign(N[i, :, :, :] / tf.math.maximum(EPS, tf.reduce_sum(N[i, :, :, :])))
+        N[i, :, :, :].assign(N[i, :, :, :] /
+                             tf.math.maximum(EPS, tf.reduce_sum(N[i, :, :, :])))
+
+    return N
+
+
+def featurize_image(rgb, params, mask=None):
+    """Produces 2D histogram of the log-chroma of the image.
+
+    This functions produces a 2D histogram of the log-chroma of a given image.
+    The function accepts an optional mask that indicates which pixels are to be
+    trusted in that image.
+
+    Args:
+      rgb: RGB image (float32) with the shape of [batch_size, height, width,
+        channels].
+      params: a dict with keys:
+      'first_bin': (float) location of the edge of the first histogram bin.
+      'bin_size': (float) size of each histogram bin.
+      'nbins': (int) number of histogram bins.
+      mask (optional): a 2D tensor (float32) with pixels == 1.0 to select which
+      pixels are considered in the computation.
+      The mask's height and width should be equal to the height and width of
+      the given image. If not given, a mask will be constructed to avoid any
+      pixel with zero value in any channel of the given image.
+
+    Returns:
+      N: a 2D histogram (float32) of the log-chroma of a given image with
+      the shape of [batch_size, height, width, channels]
+    """
+
+    if rgb.dtype is not tf.float32:
+        rgb = tf.cast(rgb, dtype=tf.float32)
+        assert_rgb(rgb)
+
+    if mask is not None:
+        if mask.shape[-1] > 1:
+            mask = tf.expand_dims(tf.reduce_sum(mask, axis=3) / 3, axis=3)
+
+        if mask.dtype is not tf.float32:
+            mask = tf.cast(mask, dtype=tf.float32)
+
+    else:
+        nonzeros_inds = tf.not_equal(tf.expand_dims(tf.math.reduce_prod(
+            rgb, axis=3), axis=3), tf.constant(0, dtype=tf.float32))
+        mask = tf.where(nonzeros_inds, tf.ones(
+            np.concatenate([rgb.shape[:-1], [1]]), dtype=tf.float32),
+                             tf.zeros(np.concatenate(
+                                 [rgb.shape[:-1], [1]]), dtype=tf.float32))
+        assert_mask(mask, rgb.shape[:-1])
+
+    tf.assert_equal(tf.less_equal(tf.reduce_max(mask), 1.0) and
+                    tf.greater_equal(tf.reduce_max(mask), 0.), True,
+                    message='Mask values should be either ones or zeros')
+
+    N = compute_chroma_histogram(rgb, mask, params)
+
     return N
 
 
@@ -343,34 +391,11 @@ def data_preprocess(rgb, extended_feature, params):
       bucket weights.
   """
 
-    tf.assert_equal(len(rgb.shape), 4,
-                    message='Input image should be in the shape of ' +
-                            '[batch_size, height, width, channels]; ' +
-                            'the given image has the shape of %s.' % rgb.shape)
-
     if rgb.dtype is not tf.float32:
         rgb = tf.cast(rgb, dtype=tf.float32)
 
-    tf.assert_equal(tf.less_equal(tf.reduce_max(rgb), 1.0) and
-                    tf.greater_equal(tf.reduce_max(rgb), 0.), True,
-                    message='Image values should be in the range [0, 1]')
-
-    assert ("first_bin" in params and
-            "bin_size" in params and "nbins" in params), \
-        "The given params does not have all required keys, which should be: " \
-        "'first_bin', 'bin_size', and 'nbins'"
-
-    assert isinstance(params['first_bin'], float), \
-        "params['first_bin'] should be float"
-    assert isinstance(params['bin_size'], float), \
-        "params['bin_size'] should be float"
-    assert isinstance(params['nbins'], int), \
-        "params['nbins'] should be int"
-
-    assert (params['bin_size'] > 0), "params['bin_size'] should be greater " \
-                                     "than zero"
-    assert (params['nbins'] > 0), "params['nbins'] should be greater than " \
-                                  "zero"
+    assert_rgb(rgb)
+    assert_params(params)
 
     # Create a mask to ignore any zero pixels
     nonzeros_inds = tf.not_equal(tf.expand_dims(tf.math.reduce_prod(
