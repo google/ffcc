@@ -20,12 +20,12 @@ import scipy.io
 import matplotlib.pyplot as plt
 from matplotlib import colors
 
-SCALE_EDGES = 3
-
-img = scipy.io.loadmat('test_data/image.mat')['img']
+SCALE_EDGES = 5
+example = 2
+img = scipy.io.loadmat('test_data/image_%d.mat' % example)['img']
 img = np.expand_dims(img, 0)
 ## testing edge image
-ref_edge = scipy.io.loadmat('test_data/matlab_edge.mat')['edge']
+ref_edge = scipy.io.loadmat('test_data/matlab_edge_%d.mat' % example)['edge']
 computed_edge = local_absolute_deviation(tf.convert_to_tensor(img))
 computed_edge = tf.squeeze(computed_edge).numpy()
 _, ax = plt.subplots(1, 3)
@@ -58,8 +58,8 @@ plt.axis('off')
 plt.show()
 
 ## histogram computation
-ref_edge_N = scipy.io.loadmat('test_data/matlab_edge_histogram.mat')['edge_N']
-ref_img_N = scipy.io.loadmat('test_data/matlab_img_histogram.mat')['img_N']
+ref_edge_N = scipy.io.loadmat('test_data/matlab_edge_histogram_%d.mat' % example)['edge_N']
+ref_img_N = scipy.io.loadmat('test_data/matlab_img_histogram_%d.mat' % example)['img_N']
 params = {"first_bin": 0.0, "bin_size": 1. / 32, "nbins": 64}
 N, _ = data_preprocess(tf.convert_to_tensor(img),
                        tf.convert_to_tensor(np.ones((img.shape[0], 1))), params)
