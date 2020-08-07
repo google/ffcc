@@ -14,7 +14,7 @@
 """Tests for ops.py."""
 
 import numpy as np
-from ops import masked_local_absolute_deviation, data_preprocess
+from ops import local_absolute_deviation, data_preprocess
 import tensorflow.compat.v1 as tf
 import scipy.io
 import matplotlib.pyplot as plt
@@ -26,8 +26,7 @@ img = scipy.io.loadmat('test_data/image.mat')['img']
 img = np.expand_dims(img, 0)
 ## testing edge image
 ref_edge = scipy.io.loadmat('test_data/matlab_edge.mat')['edge']
-computed_edge, mask_edge = masked_local_absolute_deviation(
-    tf.convert_to_tensor(img))
+computed_edge = local_absolute_deviation(tf.convert_to_tensor(img))
 computed_edge = tf.squeeze(computed_edge).numpy()
 _, ax = plt.subplots(1, 3)
 ax[0].set_title('Input image')
@@ -41,7 +40,7 @@ plt.axis('off')
 plt.show()
 
 # Check working with batches.
-computed_edges, _ = masked_local_absolute_deviation(
+computed_edges = local_absolute_deviation(
     tf.concat((tf.convert_to_tensor(img), tf.convert_to_tensor(img)), axis=0))
 computed_edge_1 = tf.squeeze(computed_edges[0, :, :, :]).numpy()
 computed_edge_2 = tf.squeeze(computed_edges[1, :, :, :]).numpy()
@@ -59,7 +58,7 @@ plt.axis('off')
 plt.show()
 
 ## histogram computation
-ref_edge_N = scipy.io.loadmat('test_data/matlab_edge_histogram.mat')['edge_N'] * SCALE_EDGES
+ref_edge_N = scipy.io.loadmat('test_data/matlab_edge_histogram.mat')['edge_N']
 ref_img_N = scipy.io.loadmat('test_data/matlab_img_histogram.mat')['img_N']
 params = {"first_bin": 0.0, "bin_size": 1. / 32, "nbins": 64}
 N, _ = data_preprocess(tf.convert_to_tensor(img),
@@ -74,7 +73,7 @@ images = []
 axs[0, 0].set_title('Matlab image hist')
 images.append(axs[0, 0].imshow(ref_img_N))
 axs[0, 1].set_title('Matlab edge hist')
-images.append(axs[0, 1].imshow(ref_edge_N))
+images.append(axs[0, 1].imshow(ref_edge_N * SCALE_EDGES))
 axs[1, 0].set_title('Py image hist')
 images.append(axs[1, 0].imshow(N[:, :, 0]))
 axs[1, 1].set_title('Py edge hist')

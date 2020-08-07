@@ -63,20 +63,6 @@ def assert_rgb(rgb):
                     message='Image values should be in the range [0, 1]')
 
 
-def assert_mask(mask, rgb_shape):
-    """"Assert mask based on the target rgb_shape"""
-    tf.assert_equal(mask.shape[:-1], rgb_shape,
-                    message='The given mask should have the same ' +
-                            'dimensions of the given image (except ' +
-                            'for the color channel). The given rgb' +
-                            ' image has a shape of %s, while' % rgb_shape +
-                            ' the mask has a shape of %s.' % mask.shape)
-
-    tf.assert_equal(tf.equal(tf.reduce_max(mask), 1.0) or
-                    tf.equal(tf.reduce_max(mask), 0.), True,
-                    message='Mask values should be either ones or zeros')
-
-
 def edge_kernel():
     """Construct a set of 3x3 kernels for edge computation."""
     filters = np.zeros((3, 3, 8, 1))
@@ -144,7 +130,7 @@ def c2r_ifft2(x_fft):
             tf.signal.ifft2d(tf.transpose(x_fft, [0, 3, 1, 2])), [0, 2, 3, 1]))
 
 
-def masked_local_absolute_deviation(rgb, mask=None):
+def local_absolute_deviation(rgb):
     """Compute a Local Absolute Deviation in sliding 3x3 window fashion.
 
   This functions computes the edge signal of a given rgb image. The given
@@ -155,51 +141,21 @@ def masked_local_absolute_deviation(rgb, mask=None):
   Args:
     rgb: RGB image (float32) with the shape of [batch_size, height, width,
       channels].
-    mask (optional): a 2D tensor (float32) with pixels == 1.0 to select which
-    pixels are considered in the computation. The mask's height and width
-    should be equal to the height and width of the given image.
 
   Returns:
     rgb_edge: RGB image (float32) with the shape of [batch_size, height, width,
     channels] of the corresponding edge signals of each color channel in the rgb
     input image.
-    mask_edge: 2D mask image (float32) with 0's for pixels in the rgb_edge image
-    that have at least zero in any of its color channels.
   """
 
     if rgb.dtype is not tf.float32:
         rgb = tf.cast(rgb, dtype=tf.float32)
-
     assert_rgb(rgb)
-
-    if mask is not None:
-        if mask.shape[-1] > 1:
-            # mask = tf.image.rgb_to_grayscale(mask)
-            mask = tf.expand_dims(tf.reduce_sum(mask, axis=3) / 3, axis=3)
-
-        if mask.dtype is not tf.float32:
-            mask = tf.cast(mask, dtype=tf.float32)
-
-        tf.assert_equal(tf.equal(tf.reduce_max(mask), 1.0) or
-                        tf.equal(tf.reduce_max(mask), 0.), True,
-                        message='Mask values should be either ones or zeros')
-
-        assert_mask(mask, rgb.shape[:-1])
 
     # Padding the image and the mask (if given) before computing the image's
     # edges
     target_size = [rgb.shape[1] + 2, rgb.shape[2] + 2]
     rgb_padded = padding_img(rgb, target_size)
-
-    # Make untrusted pixels' values = zeros
-    if mask is not None:
-        # Padding the mask
-        padded_maske = tf.squeeze(padding_img(tf.expand_dims(mask, axis=3),
-                                              target_size), axis=3)
-        # Mask out unwanted pixels
-        for c in range(rgb_padded.shape[-1]):
-            rgb_padded[:, :, :, c].assign(tf.math.multiply(
-                rgb_padded[:, :, :, c], tf.squeeze(padded_maske, axis=3)))
 
     # Applying a serious of conv filters to compute the absolute deviation in
     # the input image
@@ -214,19 +170,10 @@ def masked_local_absolute_deviation(rgb, mask=None):
                                  strides=1, padding='VALID'))))
     rgb_edge.assign(rgb_edge / 8)
 
-    # Create a mask for the edge image
-    nonzeros_inds = tf.not_equal(tf.expand_dims(tf.math.reduce_prod(
-        rgb_edge, axis=3), axis=3), tf.constant(0, dtype=tf.float32))
-    mask_edge = tf.where(nonzeros_inds, tf.ones(
-        np.concatenate([rgb_edge.shape[:-1], [1]]), dtype=tf.float32),
-                         tf.zeros(np.concatenate(
-                             [rgb_edge.shape[:-1], [1]]), dtype=tf.float32))
-
-    return rgb_edge, mask_edge
+    return rgb_edge
 
 
-
-def compute_chroma_histogram(rgb, mask, params):
+def compute_chroma_histogram(rgb, params):
     """Main function of histogram computation.
 
      This functions produces a 2D histogram of the log-chroma of a given image.
@@ -236,11 +183,6 @@ def compute_chroma_histogram(rgb, mask, params):
      Args:
        rgb: RGB image (float32) with the shape of [batch_size, height, width,
          channels].
-       mask: a 2D tensor (float32) with pixels == 1.0 to select which
-       pixels are considered in the computation.
-       The mask's height and width should be equal to the height and width of
-       the given image. If not given, a mask will be constructed to avoid any
-       pixel with zero value in any channel of the given image.
        params: a dict with keys:
        'first_bin': (float) location of the edge of the first histogram bin.
        'bin_size': (float) size of each histogram bin.
@@ -250,19 +192,13 @@ def compute_chroma_histogram(rgb, mask, params):
        N: a 2D histogram (float32) of the log-chroma of a given image with
        the shape of [batch_size, height, width, channels]
      """
-    if rgb.dtype is not tf.float32:
-        rgb = tf.cast(rgb, dtype=tf.float32)
-        assert_rgb(rgb)
 
-    if mask.shape[-1] > 1:
-        mask = tf.expand_dims(tf.reduce_sum(mask, axis=3) / 3, axis=3)
-
-    if mask.dtype is not tf.float32:
-        mask = tf.cast(mask, dtype=tf.float32)
-
-    assert_rgb(rgb)
-    assert_mask(mask, rgb.shape[:-1])
-    assert_params(params)
+    nonzeros_inds = tf.not_equal(tf.expand_dims(tf.math.reduce_prod(
+        rgb, axis=3), axis=3), tf.constant(0, dtype=tf.float32))
+    mask = tf.where(nonzeros_inds, tf.ones(
+        np.concatenate([rgb.shape[:-1], [1]]), dtype=tf.float32),
+                    tf.zeros(np.concatenate(
+                        [rgb.shape[:-1], [1]]), dtype=tf.float32))
 
     first_bin = tf.convert_to_tensor(params['first_bin'], dtype=tf.float32)
     bin_size = tf.convert_to_tensor(params['bin_size'], dtype=tf.float32)
@@ -297,12 +233,11 @@ def compute_chroma_histogram(rgb, mask, params):
     return N
 
 
-def featurize_image(rgb, params, mask=None):
-    """Produces 2D histogram of the log-chroma of the image.
+def featurize_image(rgb, params):
+    """Produces 2D histograms of a given rgb image.
 
-    This functions produces a 2D histogram of the log-chroma of a given image.
-    The function accepts an optional mask that indicates which pixels are to be
-    trusted in that image.
+    This functions produces a 2D histogram of the log-chroma of the input
+    image's colors and the edge image's colors.
 
     Args:
       rgb: RGB image (float32) with the shape of [batch_size, height, width,
@@ -311,44 +246,23 @@ def featurize_image(rgb, params, mask=None):
       'first_bin': (float) location of the edge of the first histogram bin.
       'bin_size': (float) size of each histogram bin.
       'nbins': (int) number of histogram bins.
-      mask (optional): a 2D tensor (float32) with pixels == 1.0 to select which
-      pixels are considered in the computation.
-      The mask's height and width should be equal to the height and width of
-      the given image. If not given, a mask will be constructed to avoid any
-      pixel with zero value in any channel of the given image.
+
 
     Returns:
-      N: a 2D histogram (float32) of the log-chroma of a given image with
-      the shape of [batch_size, height, width, channels]
+      chroma_histograms: stack of 2D chroma histograms (float32) from the
+      filter bank. For each channel, the chroma histogram is generated from the
+      input as described below:
+        ch = 0: from RGB input.
+        ch = 1: from edge filter input.
     """
 
-    if rgb.dtype is not tf.float32:
-        rgb = tf.cast(rgb, dtype=tf.float32)
-        assert_rgb(rgb)
+    N = compute_chroma_histogram(rgb, params)
 
-    if mask is not None:
-        if mask.shape[-1] > 1:
-            mask = tf.expand_dims(tf.reduce_sum(mask, axis=3) / 3, axis=3)
+    edge_rgb = local_absolute_deviation(rgb)
+    N_e = compute_chroma_histogram(edge_rgb, params)
+    chroma_histograms = tf.concat((N, N_e), axis=3)
 
-        if mask.dtype is not tf.float32:
-            mask = tf.cast(mask, dtype=tf.float32)
-
-    else:
-        nonzeros_inds = tf.not_equal(tf.expand_dims(tf.math.reduce_prod(
-            rgb, axis=3), axis=3), tf.constant(0, dtype=tf.float32))
-        mask = tf.where(nonzeros_inds, tf.ones(
-            np.concatenate([rgb.shape[:-1], [1]]), dtype=tf.float32),
-                             tf.zeros(np.concatenate(
-                                 [rgb.shape[:-1], [1]]), dtype=tf.float32))
-        assert_mask(mask, rgb.shape[:-1])
-
-    tf.assert_equal(tf.less_equal(tf.reduce_max(mask), 1.0) and
-                    tf.greater_equal(tf.reduce_max(mask), 0.), True,
-                    message='Mask values should be either ones or zeros')
-
-    N = compute_chroma_histogram(rgb, mask, params)
-
-    return N
+    return chroma_histograms
 
 
 def process_extended_features(extended_features):
@@ -396,19 +310,7 @@ def data_preprocess(rgb, extended_feature, params):
 
     assert_rgb(rgb)
     assert_params(params)
-
-    # Create a mask to ignore any zero pixels
-    nonzeros_inds = tf.not_equal(tf.expand_dims(tf.math.reduce_prod(
-        rgb, axis=3), axis=3), tf.constant(0, dtype=tf.float32))
-    mask = tf.where(nonzeros_inds, tf.ones(
-        np.concatenate([rgb.shape[:-1], [1]]), dtype=tf.float32),
-                    tf.zeros(np.concatenate(
-                        [rgb.shape[:-1], [1]]), dtype=tf.float32))
-
-    edge_rgb, edge_mask = masked_local_absolute_deviation(rgb)
-    chroma_histograms = tf.concat((featurize_image(rgb, params, mask=mask),
-                                  featurize_image(edge_rgb, params,
-                                                  mask=edge_mask)), axis=3)
+    chroma_histograms = featurize_image(rgb, params)
     p_extended_feature = process_extended_features(extended_feature)
     return chroma_histograms, p_extended_feature
 
