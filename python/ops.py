@@ -34,9 +34,10 @@ def padding_img(rgb, target_size):
 def assert_params(params):
     """"Assert params"""
     assert ("first_bin" in params and
-            "bin_size" in params and "nbins" in params), \
+            "bin_size" in params and "nbins" in params and
+            "extended_feature_bins" in params), \
         "The given params does not have all required keys, which should be: " \
-        "'first_bin', 'bin_size', and 'nbins'"
+        "'first_bin', 'bin_size', 'nbins', 'extended_feature_bins'"
 
     assert isinstance(params['first_bin'], float), \
         "params['first_bin'] should be float"
@@ -44,11 +45,14 @@ def assert_params(params):
         "params['bin_size'] should be float"
     assert isinstance(params['nbins'], int), \
         "params['nbins'] should be int"
+    assert isinstance(params['extended_feature_bins'], list), \
+        "params['extended_feature_bins'] should be a vector"
 
     assert (params['bin_size'] > 0), "params['bin_size'] should be greater " \
                                      "than zero"
     assert (params['nbins'] > 0), "params['nbins'] should be greater than " \
                                   "zero"
+
 
 
 def assert_rgb(rgb):
@@ -226,9 +230,11 @@ def compute_chroma_histogram(rgb, params):
                                       tf.cast(nbins, tf.float32)), tf.int32)
         indices = sub2ind([nbins, nbins], ub, vb)
         N[i, :, :, :].assign(tf.cast(tf.reshape(tf.math.bincount(
-            indices, minlength=nbins * nbins), [nbins, nbins, 1]), dtype=tf.float32))
+            indices, minlength=nbins * nbins), [nbins, nbins, 1]),
+            dtype=tf.float32))
         N[i, :, :, :].assign(N[i, :, :, :] /
-                             tf.math.maximum(EPS, tf.reduce_sum(N[i, :, :, :])))
+                             tf.math.maximum(EPS,
+                                             tf.reduce_sum(N[i, :, :, :])))
 
     return N
 
@@ -265,18 +271,69 @@ def featurize_image(rgb, params):
     return chroma_histograms
 
 
-def process_extended_features(extended_features):
-    """Encode extended features.
+def process_extended_feature(extended_feature, params):
+    """Encode extended feature.
 
   Args:
     extended_feature: a feature (float32) of the input data, in the shape
       [batch_size, extended_vector_length]
+    params: a dict with keys:
+      'extended_feature_bins': (float32) a 1D vector of feature bin values.
 
   Returns:
     extended_features: A 1D vector (float32) with encoded extended feature
-      bucket weights.
+      bucket weights, in the shape [batch_size, extended_feature_bins].
   """
-    # TODO(Mahmoud): implement this function
+
+    bins = params['extended_feature_bins']
+    bins.sort()
+    bins = tf.expand_dims(tf.convert_to_tensor(bins, dtype=tf.float32), axis=0)
+
+    batch_size = extended_feature.shape[0]
+
+    n = tf.cast(bins.shape[1], dtype=tf.int32)
+
+    if n == 1:
+        return tf.convert_to_tensor(np.ones((batch_size, 1)),
+                                    dtype=tf.float32)
+
+    if extended_feature.dtype is not tf.float32:
+        extended_feature = tf.cast(extended_feature, dtype=tf.float32)
+
+    extended_feature_clamp = tf.minimum(
+        tf.math.reduce_max(bins),
+        tf.maximum(tf.math.reduce_min(bins), extended_feature))
+
+    low = tf.minimum(
+        tf.cast(tf.math.argmin(
+            tf.abs(tf.transpose(bins - extended_feature_clamp))),
+                dtype=tf.int32), n-2)
+
+    high = low + 1
+
+    low_bin_value = tf.expand_dims(tf.gather(bins[0, :], low), axis=1)
+    high_bin_value = tf.expand_dims(tf.gather(bins[0, :], high), axis=1)
+
+    weight_high = (extended_feature_clamp - low_bin_value) / \
+                  (high_bin_value - low_bin_value)
+    weight_high = tf.reshape(weight_high, [tf.size(weight_high)])
+    weight_low = 1. - weight_high
+
+    low = tf.expand_dims(low, axis=1)
+    high = tf.expand_dims(high, axis=1)
+    inds = tf.tile(tf.expand_dims(tf.range(0, n), axis=0), [batch_size, 1])
+
+    extended_features_l = tf.sparse.SparseTensor(
+        indices=tf.where(inds == low), values=weight_low,
+        dense_shape=[batch_size, n])
+
+    extended_features_h = tf.sparse.SparseTensor(
+        indices=tf.where(inds == high), values=weight_high,
+        dense_shape=[batch_size, n])
+
+    extended_features = tf.sparse.to_dense(extended_features_l) + \
+                        tf.sparse.to_dense(extended_features_h)
+
     return extended_features
 
 
@@ -294,6 +351,7 @@ def data_preprocess(rgb, extended_feature, params):
       'first_bin': (float) location of the edge of the first histogram bin.
       'bin_size': (float) size of each histogram bin.
       'nbins': (int) number of histogram bins.
+      'extended_feature_bins': (float32) a 1D vector of feature bin values.
 
   Returns:
     chroma_histograms: stack of 2D chroma histograms (float32) from the
@@ -301,8 +359,8 @@ def data_preprocess(rgb, extended_feature, params):
       input as described below:
         ch = 0: from RGB input.
         ch = 1: from edge filter input.
-    p_extended_feature: A 1D vector (float32) with encoded extended feature
-      bucket weights.
+    extended_features: A 1D vector (float32) with encoded extended feature
+      bucket weights, in the shape [batch_size, extended_feature_bins].
   """
 
     if rgb.dtype is not tf.float32:
@@ -311,8 +369,8 @@ def data_preprocess(rgb, extended_feature, params):
     assert_rgb(rgb)
     assert_params(params)
     chroma_histograms = featurize_image(rgb, params)
-    p_extended_feature = process_extended_features(extended_feature)
-    return chroma_histograms, p_extended_feature
+    extended_features = process_extended_feature(extended_feature, params)
+    return chroma_histograms, extended_features
 
 
 def eval_features(features, filters_fft, bias):
