@@ -24,11 +24,11 @@ SCALE_EDGES = 5
 example = 2
 img = scipy.io.loadmat('test_data/image_%d.mat' % example)['img']
 img = np.expand_dims(img, 0)
-extended_feature = tf.convert_to_tensor(np.ones((img.shape[0], 1))) * 0.75
+extended_feature = tf.convert_to_tensor(np.ones((img.shape[0], 1)), dtype=tf.float32) * 0.75
 print('Input extended feature: %s\n' % extended_feature.numpy())
 ## testing edge image
 ref_edge = scipy.io.loadmat('test_data/matlab_edge_%d.mat' % example)['edge']
-computed_edge = local_absolute_deviation(tf.convert_to_tensor(img))
+computed_edge = local_absolute_deviation(tf.convert_to_tensor(img, dtype=tf.float32))
 computed_edge = tf.squeeze(computed_edge).numpy()
 _, ax = plt.subplots(1, 3)
 ax[0].set_title('Input image')
@@ -43,7 +43,7 @@ plt.show()
 
 # Check working with batches.
 computed_edges = local_absolute_deviation(
-    tf.concat((tf.convert_to_tensor(img), tf.convert_to_tensor(img)), axis=0))
+    tf.concat((tf.convert_to_tensor(img, dtype=tf.float32), tf.convert_to_tensor(img, dtype=tf.float32)), axis=0))
 computed_edge_1 = tf.squeeze(computed_edges[0, :, :, :]).numpy()
 computed_edge_2 = tf.squeeze(computed_edges[1, :, :, :]).numpy()
 _, ax = plt.subplots(1, 4)
@@ -62,8 +62,8 @@ plt.show()
 ## histogram computation
 ref_edge_N = scipy.io.loadmat('test_data/matlab_edge_histogram_%d.mat' % example)['edge_N']
 ref_img_N = scipy.io.loadmat('test_data/matlab_img_histogram_%d.mat' % example)['img_N']
-params = {"first_bin": 0.0, "bin_size": 1. / 32, "nbins": 64, "extended_feature_bins": [1.0, 0.5, 0.0]}
-N, encoded_feature = data_preprocess(tf.convert_to_tensor(img), extended_feature, params)
+params = {"first_bin": 0.0, "bin_size": 1. / 32, "nbins": 64, "extended_feature_bins": [0.0, 0.5, 1.0]}
+N, encoded_feature = data_preprocess(tf.convert_to_tensor(img, dtype=tf.float32), extended_feature, params)
 print('Encoded feature: %s\n' % encoded_feature.numpy())
 N = tf.squeeze(N, axis=0).numpy()
 
@@ -107,8 +107,8 @@ plt.xticks([]), plt.yticks([])
 plt.axis('off')
 
 # Check working with batches
-N, encoded_feature = data_preprocess(tf.concat((tf.convert_to_tensor(img),
-                                  tf.convert_to_tensor(img)), axis=0),
+N, encoded_feature = data_preprocess(tf.concat((tf.convert_to_tensor(img, dtype=tf.float32),
+                                  tf.convert_to_tensor(img, dtype=tf.float32)), axis=0),
                        tf.concat((extended_feature, extended_feature),
                                  axis=0), params)
 print('Encoded feature: %s\n' % encoded_feature.numpy())
