@@ -14,46 +14,11 @@
 """FFCC TensorFlow ops."""
 import math
 import itertools
-import sys
 
 import numpy as np
 import tensorflow.compat.v1 as tf
 
 EPS = tf.constant(1e-9, dtype=tf.float32)
-
-# def assert_params(params):
-#     """"Assert params"""
-#     assert ("first_bin" in params and
-#             "bin_size" in params and "nbins" in params and
-#             "extended_feature_bins" in params), \
-#         "The given params does not have all required keys, which should be: " \
-#         "'first_bin', 'bin_size', 'nbins', 'extended_feature_bins'"
-#
-#     assert isinstance(params['first_bin'], float), \
-#         "params['first_bin'] should be float"
-#     assert isinstance(params['bin_size'], float), \
-#         "params['bin_size'] should be float"
-#     assert isinstance(params['nbins'], int), \
-#         "params['nbins'] should be int"
-#     assert isinstance(params['extended_feature_bins'], list), \
-#         "params['extended_feature_bins'] should be a vector"
-#
-#     assert (params['bin_size'] > 0), "params['bin_size'] should be greater " \
-#                                      "than zero"
-#     assert (params['nbins'] > 0), "params['nbins'] should be greater than " \
-#                                   "zero"
-
-
-# def assert_rgb(rgb):
-#     """"Assert rgb image"""
-#     tf.assert_equal(len(rgb.shape), 4,
-#                     message='Input image should be in the shape of ' +
-#                             '[batch_size, height, width, channels]; ' +
-#                             'the given image has the shape of %s.' % rgb.shape)
-#
-#     tf.assert_equal(tf.less_equal(tf.reduce_max(rgb), 1.0) and
-#                     tf.greater_equal(tf.reduce_max(rgb), 0.), True,
-#                     message='Image values should be in the range [0, 1]')
 
 
 def edge_kernel():
@@ -66,8 +31,9 @@ def edge_kernel():
         if dx == 0 and dy == 0:
             j += 1
             continue
-        filters[i-j, 1 + dx, 1 + dy, 0] = -1
+        filters[i - j, 1 + dx, 1 + dy, 0] = -1
     return tf.constant(filters, dtype=tf.float32)
+
 
 edge_filters = edge_kernel()
 
@@ -179,7 +145,7 @@ def local_absolute_deviation(rgb):
     return rgb_edge
 
 
-def compute_chroma_histogram(rgb, params, batch_size=None):
+def compute_chroma_histogram(rgb, params):
     """Main function of histogram computation.
 
      This functions produces a 2D histogram of the log-chroma of a given image.
@@ -193,15 +159,13 @@ def compute_chroma_histogram(rgb, params, batch_size=None):
        'first_bin': (float) location of the edge of the first histogram bin.
        'bin_size': (float) size of each histogram bin.
        'nbins': (int) number of histogram bins.
-       batch_size: batch size (optional)
 
      Returns:
        N: a 2D histogram (float32) of the log-chroma of a given image with
        the shape of [batch_size, height, width, channels]
      """
 
-    if batch_size is None:
-        batch_size = rgb.shape[0]
+    batch_size = rgb.shape[0]
 
     valid_pixels = tf.greater(tf.math.reduce_prod(rgb, axis=3), EPS)
     first_bin = tf.convert_to_tensor(params['first_bin'], dtype=tf.float32)
@@ -266,72 +230,6 @@ def featurize_image(rgb, params):
     return chroma_histograms
 
 
-def splat(extended_feature, params, batch_size=None):
-    """Encode extended feature.
-
-  Args:
-    extended_feature: a feature (float32) of the input data, in the shape
-      [batch_size, extended_vector_length]
-    params: a dict with keys:
-      'extended_feature_bins': (float32) a 1D vector of feature bin values.
-    batch_size: batch size (optional)
-
-  Returns:
-    extended_features: A 1D vector (float32) with encoded extended feature
-      bucket weights, in the shape [batch_size, extended_feature_bins].
-  """
-
-    bins = params['extended_feature_bins']
-    n = len(bins)
-    bins = tf.expand_dims(tf.convert_to_tensor(bins, dtype=tf.float32), axis=0)
-
-    if batch_size is None:
-        batch_size = extended_feature.shape[0]
-
-    if n == 1:
-        return tf.convert_to_tensor(np.ones((batch_size, 1)),
-                                    dtype=tf.float32)
-
-    if extended_feature.dtype is not tf.float32:
-        extended_feature = tf.cast(extended_feature, dtype=tf.float32)
-
-    extended_feature_clamp = tf.minimum(
-        tf.math.reduce_max(bins),
-        tf.maximum(tf.math.reduce_min(bins), extended_feature))
-
-    low = tf.minimum(
-        tf.cast(tf.math.argmin(
-            tf.abs(tf.transpose(bins - extended_feature_clamp))),
-            dtype=tf.int32), n - 2)
-
-    high = low + 1
-
-    low_bin_value = tf.expand_dims(tf.gather(bins[0, :], low), axis=1)
-    high_bin_value = tf.expand_dims(tf.gather(bins[0, :], high), axis=1)
-
-    weight_high = (extended_feature_clamp - low_bin_value) / \
-                  (high_bin_value - low_bin_value)
-    weight_high = tf.reshape(weight_high, [tf.size(weight_high)])
-    weight_low = 1. - weight_high
-
-    low = tf.expand_dims(low, axis=1)
-    high = tf.expand_dims(high, axis=1)
-    inds = tf.tile(tf.expand_dims(tf.range(0, n), axis=0), [batch_size, 1])
-
-    extended_features_l = tf.sparse.SparseTensor(
-        indices=tf.where(inds == low), values=weight_low,
-        dense_shape=[batch_size, n])
-
-    extended_features_h = tf.sparse.SparseTensor(
-        indices=tf.where(inds == high), values=weight_high,
-        dense_shape=[batch_size, n])
-
-    extended_features = tf.sparse.to_dense(extended_features_l) + \
-                        tf.sparse.to_dense(extended_features_h)
-
-    return extended_features
-
-
 def data_preprocess(rgb, extended_feature, params):
     """Convert inputs to histogram features for TensorFlow.
 
@@ -359,7 +257,9 @@ def data_preprocess(rgb, extended_feature, params):
   """
 
     chroma_histograms = featurize_image(rgb, params)
-    extended_features = splat(extended_feature, params)
+    extended_features = splat_non_uniform(
+       extended_feature, tf.convert_to_tensor(params['extended_feature_bins'],
+                                              dtype=tf.float32))
     return chroma_histograms, extended_features
 
 
@@ -566,37 +466,48 @@ def splat_non_uniform(x, bins):
   method takes NumPy arrays instead of TF tensors, and returns a Numpy array.
 
   Args:
-    x: A 1D vector of values being splatted, in the shape of [batch_size].
+    x: A 2D matrix of values being splatted, in the shape of [batch_size, 1].
     bins: 1D vector, in the shape of [N], where N is the number of bins.
 
   Returns:
-    A 2D matrix with interpolated weights in the shape of [batch_size, M], where
-    each row is the splat weights.
+    f: A 2D matrix with interpolated weights in the shape of [batch_size, N],
+    where each row is the splat weights.
   """
 
-    x = np.asarray(x)
-    bins = np.asarray(bins)
+    N = tf.size(bins)
+    bins = tf.expand_dims(bins, axis=0)
+    batch_size = x.shape[0]
+    if N == 1:
+        return tf.convert_to_tensor(np.ones((batch_size, 1)),
+                                    dtype=tf.float32)
 
     # clamps the x into the boundary of bins
-    if (bins.ndim != 1 or x.ndim != 1 or bins.shape[0] <= 1 or x.shape[0] < 1):
-        raise ValueError('Input and output parameters does not meet requirement: '
-                         'x.shape={}, bin.shape={}'.format(x.shape, bins.shape))
+    x_clamp = tf.minimum(
+        tf.math.reduce_max(bins),
+        tf.maximum(tf.math.reduce_min(bins), x))
 
-    if bins.shape[0] == 1:
-        return np.ones((x.shape[0], 1))
+    idx_lo = tf.expand_dims(tf.minimum(tf.cast(tf.math.argmin(
+        tf.abs(tf.transpose(bins - x_clamp))), dtype=tf.int32), N - 2), axis=1)
 
-    clamped_x = np.clip(x, bins[0], bins[-1])
-    delta_x = clamped_x[:, np.newaxis] - bins
-    idx_lo = np.minimum(
-        delta_x.shape[1] - np.argmax(delta_x[:, ::-1] >= 0., axis=1) - 1,
-        bins.shape[0] - 2)
     idx_hi = idx_lo + 1
-    w_hi = (clamped_x - bins[idx_lo]) / (bins[idx_hi] - bins[idx_lo])
-    w_lo = 1 - w_hi
 
-    f = np.zeros((x.shape[0], bins.shape[0]))
-    f[range(x.shape[0]), idx_lo] = w_lo
-    f[range(x.shape[0]), idx_hi] = w_hi
+    low_bin_value = tf.gather(bins[0, :], idx_lo)
+    high_bin_value = tf.gather(bins[0, :], idx_hi)
+
+    w_high = tf.squeeze(
+        (x_clamp - low_bin_value) / (high_bin_value - low_bin_value),
+        axis=1)
+    w_low = 1. - w_high
+    indices = tf.tile(tf.expand_dims(tf.range(0, N), axis=0), [batch_size, 1])
+    extended_features_l = tf.sparse.SparseTensor(
+        indices=tf.where(indices == idx_lo), values=w_low,
+        dense_shape=[batch_size, N])
+    extended_features_h = tf.sparse.SparseTensor(
+        indices=tf.where(indices == idx_hi), values=w_high,
+        dense_shape=[batch_size, N])
+
+    f = tf.sparse.to_dense(extended_features_l) + \
+        tf.sparse.to_dense(extended_features_h)
 
     return f
 
