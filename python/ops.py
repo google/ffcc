@@ -18,6 +18,7 @@ import numpy as np
 import tensorflow.compat.v1 as tf
 
 
+
 EPS = tf.constant(1e-9, dtype=tf.float32)
 
 
@@ -66,7 +67,7 @@ def r2c_fft2(x):
   if ndims != 4:
     raise ValueError('Expecting ndims == 4, actual={}'.format(ndims))
   x_fft = tf.transpose(
-    tf.signal.fft2d(tf.transpose(r2c(x), [0, 3, 1, 2])), [0, 2, 3, 1])
+      tf.signal.fft2d(tf.transpose(r2c(x), [0, 3, 1, 2])), [0, 2, 3, 1])
   return x_fft
 
 
@@ -83,8 +84,10 @@ def c2r_ifft2(x_fft):
   if ndims != 4:
     raise ValueError('Expecting ndims == 4, actual={}'.format(ndims))
   return c2r(
-    tf.transpose(
-      tf.signal.ifft2d(tf.transpose(x_fft, [0, 3, 1, 2])), [0, 2, 3, 1]))
+      tf.transpose(
+          tf.signal.ifft2d(tf.transpose(x_fft, [0, 3, 1, 2])), [0, 2, 3, 1]))
+
+
 
 
 def local_absolute_deviation(rgb):
@@ -422,24 +425,24 @@ def eval_features(features, filters_fft, bias):
   num_channels = feature_shape[3]
 
   deps = [
-    tf.assert_equal(batch_size,
-                    tf.shape(filters_fft)[0]),
-    tf.assert_equal(height,
-                    tf.shape(filters_fft)[1]),
-    tf.assert_equal(width,
-                    tf.shape(filters_fft)[2]),
-    tf.assert_equal(num_channels,
-                    tf.shape(filters_fft)[3]),
-    tf.assert_equal(batch_size,
-                    tf.shape(bias)[0]),
-    tf.assert_equal(height,
-                    tf.shape(bias)[1]),
-    tf.assert_equal(width,
-                    tf.shape(bias)[2]),
+      tf.assert_equal(batch_size,
+                      tf.shape(filters_fft)[0]),
+      tf.assert_equal(height,
+                      tf.shape(filters_fft)[1]),
+      tf.assert_equal(width,
+                      tf.shape(filters_fft)[2]),
+      tf.assert_equal(num_channels,
+                      tf.shape(filters_fft)[3]),
+      tf.assert_equal(batch_size,
+                      tf.shape(bias)[0]),
+      tf.assert_equal(height,
+                      tf.shape(bias)[1]),
+      tf.assert_equal(width,
+                      tf.shape(bias)[2]),
   ]
   with tf.control_dependencies(deps):
     fx_fft = tf.reduce_sum(
-      r2c_fft2(features) * filters_fft, axis=3, keepdims=True)
+        r2c_fft2(features) * filters_fft, axis=3, keepdims=True)
     fx = c2r_ifft2(fx_fft)
 
     # Squeeze the last dimension from [batch, n, n, 1] to [batch, n , n]
@@ -462,7 +465,7 @@ def softmax2(h):
     raise ValueError('Expecting ndims = 3, actual={}'.format(ndims))
   _, height, width = h.get_shape().as_list()
   return tf.reshape(
-    tf.nn.softmax(tf.reshape(h, [-1, width * height])), [-1, height, width])
+      tf.nn.softmax(tf.reshape(h, [-1, width * height])), [-1, height, width])
 
 
 def bivariate_von_mises(pmf):
@@ -489,12 +492,12 @@ def bivariate_von_mises(pmf):
   ndims = pmf.get_shape().ndims
   sums = tf.reduce_sum(pmf, axis=list(range(1, ndims)), keepdims=True)
   deps = [
-    # Expect 3-channel input
-    tf.assert_equal(ndims, 3),
-    # Expect the shape is a square
-    tf.assert_equal(pmf_shape[1], pmf_shape[2]),
-    # Expect the sum of PMF is 1
-    tf.assert_near(sums, 1, atol=1e-4)
+      # Expect 3-channel input
+      tf.assert_equal(ndims, 3),
+      # Expect the shape is a square
+      tf.assert_equal(pmf_shape[1], pmf_shape[2]),
+      # Expect the sum of PMF is 1
+      tf.assert_near(sums, 1, atol=1e-4)
   ]
 
   with tf.control_dependencies(deps):
@@ -504,7 +507,7 @@ def bivariate_von_mises(pmf):
     size = pmf_shape[1]
     angle_step = 2. * math.pi / size
     angles = tf.reshape(
-      tf.range(size, dtype=tf.float32) * angle_step, [1, size])
+        tf.range(size, dtype=tf.float32) * angle_step, [1, size])
 
     cos_angles = tf.cos(angles)
     sin_angles = tf.sin(angles)
@@ -547,17 +550,17 @@ def bivariate_von_mises(pmf):
     sum1 = lambda x: tf.reduce_sum(x, axis=-1)
     u_expectation = sum1(sum_u * u_wrapped)
     v_expectation = sum1(sum_v * v_wrapped)
-    u_var = sum1(sum_u * u_wrapped ** 2) - u_expectation ** 2
-    v_var = sum1(sum_v * v_wrapped ** 2) - v_expectation ** 2
+    u_var = sum1(sum_u * u_wrapped**2) - u_expectation**2
+    v_var = sum1(sum_v * v_wrapped**2) - v_expectation**2
     uv_expectation = tf.linalg.matvec(
-      tf.linalg.matvec(pmf, u_wrapped, transpose_a=True)[..., tf.newaxis, :],
-      v_wrapped)[..., 0]
+        tf.linalg.matvec(pmf, u_wrapped, transpose_a=True)[..., tf.newaxis, :],
+        v_wrapped)[..., 0]
     uv_covar = uv_expectation - u_expectation * v_expectation
 
     # Construct covariance matrices.
     sigma = tf.reshape(
-      tf.stack([u_var, uv_covar, uv_covar, v_var], axis=1), [-1, 2, 2],
-      name='sigma_idx')
+        tf.stack([u_var, uv_covar, uv_covar, v_var], axis=1), [-1, 2, 2],
+        name='sigma_idx')
     return mu, sigma
 
 
@@ -583,11 +586,11 @@ def idx_to_uv(mu_idx, sigma_idx, step_size, offset):
   sigma_idx.shape.assert_is_compatible_with([None, 2, 2])
 
   mu = tf.add(
-    tf.multiply(tf.cast(mu_idx, dtype=tf.float32), step_size),
-    offset,
-    name='mu')
+      tf.multiply(tf.cast(mu_idx, dtype=tf.float32), step_size),
+      offset,
+      name='mu')
   sigma = tf.multiply(
-    tf.cast(sigma_idx, dtype=tf.float32), step_size ** 2, name='sigma')
+      tf.cast(sigma_idx, dtype=tf.float32), step_size**2, name='sigma')
   return mu, sigma
 
 
@@ -669,14 +672,14 @@ def uv_to_pmf(uv, step_size, offset, n):
 
   def uv_fmin():
     return tf.Print(uv, [
-      'WARNING: uv_to_pmf() given values of ',
-      tf.reduce_min(uv), ' < ', uv_min, ', clipping.'
+        'WARNING: uv_to_pmf() given values of ',
+        tf.reduce_min(uv), ' < ', uv_min, ', clipping.'
     ])
 
   def uv_fmax():
     return tf.Print(uv, [
-      'WARNING: uv_to_pmf() given values of ',
-      tf.reduce_max(uv), ' > ', uv_max, ', clipping.'
+        'WARNING: uv_to_pmf() given values of ',
+        tf.reduce_max(uv), ' > ', uv_max, ', clipping.'
     ])
 
   uv = tf.cond(tf.reduce_any(uv < uv_min), uv_fmin, lambda: uv)
@@ -687,10 +690,10 @@ def uv_to_pmf(uv, step_size, offset, n):
   uv.shape.assert_is_compatible_with([None, 2])
   if not np.isscalar(step_size):
     raise ValueError('`step_size` must be a scalar, but is of type {}'.format(
-      type(step_size)))
+        type(step_size)))
   if not np.isscalar(offset):
     raise ValueError('`step_size` must be a scalar, but is of type {}'.format(
-      type(offset)))
+        type(offset)))
 
   uv_idx = (uv - offset) / step_size
 
@@ -718,9 +721,9 @@ def uv_to_pmf(uv, step_size, offset, n):
   idx_11 = tf.stack([batch_idx, uv_idx_hi[:, 0], uv_idx_hi[:, 1]], axis=1)
 
   sparse = tf.SparseTensor(
-    indices=tf.concat([idx_00, idx_01, idx_10, idx_11], axis=0),
-    values=tf.concat([w_00, w_01, w_10, w_11], axis=0),
-    dense_shape=[batch_size, n, n])
+      indices=tf.concat([idx_00, idx_01, idx_10, idx_11], axis=0),
+      values=tf.concat([w_00, w_01, w_10, w_11], axis=0),
+      dense_shape=[batch_size, n, n])
   return tf.sparse.to_dense(tf.sparse_reorder(sparse))
 
 
@@ -767,9 +770,9 @@ def uv_to_rgb(uv):
   # u = log(g/r), v = log(g/b)
   rb = tf.exp(-uv)
   rgb = tf.stack(
-    [rb[:, 0],
-     tf.ones(shape=(tf.shape(rb)[0]), dtype=uv.dtype), rb[:, 1]],
-    axis=1)
+      [rb[:, 0],
+       tf.ones(shape=(tf.shape(rb)[0]), dtype=uv.dtype), rb[:, 1]],
+      axis=1)
 
   return rgb / tf.norm(rgb, axis=1, keepdims=True)
 
@@ -779,7 +782,7 @@ def apply_wb(rgb, uv):
 
   Args:
     rgb: float, the RGB images in the shape of [batch_size, height, width,
-    channel].
+      channel].
     uv: float, white point in log-UV coordinate in the shape of [batch_size, 2].
 
   Returns:
@@ -794,9 +797,9 @@ def apply_wb(rgb, uv):
 
   rb_gains = tf.exp(uv)
   wb_gains = tf.stack([
-    rb_gains[:, 0],
-    tf.ones(shape=tf.shape(rb_gains)[0], dtype=rb_gains.dtype), rb_gains[:, 1]
+      rb_gains[:, 0],
+      tf.ones(shape=tf.shape(rb_gains)[0], dtype=rb_gains.dtype), rb_gains[:, 1]
   ],
-    axis=1)
+                      axis=1)
 
   return rgb * wb_gains[:, tf.newaxis, tf.newaxis, :]
