@@ -13,10 +13,35 @@
 # limitations under the License.
 """FFCC TensorFlow ops."""
 import math
-import sys
-
+import itertools
 import numpy as np
 import tensorflow.compat.v1 as tf
+
+
+
+EPS = tf.constant(1e-9, dtype=tf.float32)
+
+
+def edge_kernel():
+  """Construct a set of 3x3 kernels for edge computation."""
+  filters = np.zeros((8, 3, 3, 1))
+  filters[:, 1, 1, :] = 1
+  offsets = [-1, 0, 1]
+  j = 0
+  for i, (dx, dy) in enumerate(itertools.product(offsets, repeat=2)):
+    if dx == 0 and dy == 0:
+      j += 1
+      continue
+    filters[i - j, 1 + dx, 1 + dy, 0] = -1
+  return tf.constant(filters, dtype=tf.float32)
+
+
+edge_filters = edge_kernel()
+
+
+def sub2ind(cols, r, c):
+  """Convert subscripts to linear indices"""
+  return r * cols + c
 
 
 def r2c(real):
@@ -63,6 +88,284 @@ def c2r_ifft2(x_fft):
           tf.signal.ifft2d(tf.transpose(x_fft, [0, 3, 1, 2])), [0, 2, 3, 1]))
 
 
+
+
+def local_absolute_deviation(rgb):
+  """Compute a Local Absolute Deviation in sliding 3x3 window fashion.
+
+  This functions computes the edge signal of a given rgb image.
+
+  Args:
+    rgb: RGB image (float32) with the shape of [batch_size, height, width,
+      channels].
+
+  Returns:
+    rgb_edge: RGB image (float32) with the shape of [batch_size, height, width,
+    channels] of the corresponding edge signals of each color channel in the rgb
+    input image.
+  """
+
+  # Padding the image and the mask (if given) before computing the image's
+  # edges
+  for c in range(3):  # for each color channel
+    if c == 0:
+      rgb_padded = tf.expand_dims(
+        tf.pad(rgb[:, :, :, c], [[0, 0], [1, 1], [1, 1]],
+               'SYMMETRIC'), axis=3)
+    else:
+      rgb_padded = tf.concat((rgb_padded,
+                              tf.expand_dims(tf.pad(
+                                rgb[:, :, :, c],
+                                [[0, 0], [1, 1], [1, 1]],
+                                'SYMMETRIC'), axis=3)), axis=3)
+
+  # Applying a serious of conv filters to compute the absolute deviation in
+  # the input image
+
+  for c in range(3):  # for each color channel
+    for f in range(8):  # number of filters
+      if f == 0:
+        channel_edge = tf.abs(tf.nn.conv2d(
+          tf.expand_dims(rgb_padded[:, :, :, c], axis=3),
+          filter=tf.expand_dims(edge_filters[0, :, :, :], axis=2),
+          strides=1, padding='VALID'))
+      else:
+        channel_edge = tf.concat((channel_edge, tf.abs(
+          tf.nn.conv2d(tf.expand_dims(rgb_padded[:, :, :, c], axis=3),
+                       filter=tf.expand_dims(edge_filters[f, :, :, :],
+                                             axis=2),
+                       strides=1, padding='VALID'))), axis=3)
+    channel_edge = tf.expand_dims(tf.reduce_sum(channel_edge, axis=3) / 8,
+                                  axis=3)
+    if c == 0:
+      rgb_edge = channel_edge
+    else:
+      rgb_edge = tf.concat((rgb_edge, channel_edge), axis=3)
+
+  return rgb_edge
+
+
+def compute_chroma_histogram(rgb, params):
+  """Main function of histogram computation.
+
+  This functions produces a 2D histogram of the log-chroma of a given image.
+
+  Args:
+    rgb: RGB image (float32) with the shape of [batch_size, height, width,
+      channels].
+    params: a dict with keys:
+    'first_bin': (float) location of the edge of the first histogram bin.
+    'bin_size': (float) size of each histogram bin.
+    'nbins': (int) number of histogram bins.
+
+  Returns:
+    N: a 2D histogram (float32) of the log-chroma of a given image with
+    the shape of [batch_size, height, width, channels]
+  """
+
+  batch_size = rgb.shape[0]
+
+  valid_pixels = tf.greater(tf.math.reduce_prod(rgb, axis=3), EPS)
+  first_bin = tf.convert_to_tensor(params['first_bin'], dtype=tf.float32)
+  bin_size = tf.convert_to_tensor(params['bin_size'], dtype=tf.float32)
+  nbins = tf.convert_to_tensor(params['nbins'], dtype=tf.int32)
+
+  for i in range(batch_size):
+    # Exclude any zero pixels (at any color channel)
+    valid_colors = tf.gather_nd(rgb[i, :, :, :],
+                                tf.where(valid_pixels[i, :, :]))
+    uv = rgb_to_uv(valid_colors)
+    ub = tf.cast(tf.math.floormod(
+      tf.round((uv[:, 0] - first_bin) / bin_size),
+      tf.cast(nbins, tf.float32)), tf.int32)
+    vb = tf.cast(tf.math.floormod(
+      tf.round((uv[:, 1] - first_bin) / bin_size),
+      tf.cast(nbins, tf.float32)), tf.int32)
+    indices = sub2ind(nbins, ub, vb)
+    if i == 0:
+      N = tf.expand_dims(tf.cast(tf.reshape(tf.math.bincount(
+        indices, minlength=nbins * nbins), [nbins, nbins, 1]),
+        dtype=tf.float32), axis=0)
+      N = N / tf.math.maximum(EPS, tf.reduce_sum(N))
+    else:
+      n = tf.expand_dims(tf.cast(tf.reshape(tf.math.bincount(
+        indices, minlength=nbins * nbins), [nbins, nbins, 1]),
+        dtype=tf.float32), axis=0)
+      n = n / tf.math.maximum(EPS, tf.reduce_sum(n))
+      N = tf.concat((N, n), axis=0)
+  return N
+
+
+def featurize_image(rgb, params):
+  """Produces 2D histograms of a given rgb image.
+
+  This functions produces a 2D histogram of the log-chroma of the input
+  image's colors and the edge image's colors.
+
+  Args:
+    rgb: RGB image (float32) with the shape of [batch_size, height, width,
+      channels].
+    params: a dict with keys:
+    'first_bin': (float) location of the edge of the first histogram bin.
+    'bin_size': (float) size of each histogram bin.
+    'nbins': (int) number of histogram bins.
+
+
+  Returns:
+    chroma_histograms: stack of 2D chroma histograms (float32) from the
+    filter bank. For each channel, the chroma histogram is generated from the
+    input as described below:
+      ch = 0: from RGB input.
+      ch = 1: from edge filter input.
+  """
+
+  N = compute_chroma_histogram(rgb, params)
+
+  edge_rgb = local_absolute_deviation(rgb)
+  N_e = compute_chroma_histogram(edge_rgb, params)
+  chroma_histograms = tf.concat((N, N_e), axis=3)
+
+  return chroma_histograms
+
+
+def local_absolute_deviation(rgb):
+  """Compute a Local Absolute Deviation in sliding 3x3 window fashion.
+
+  This functions computes the edge signal of a given rgb image.
+
+  Args:
+    rgb: RGB image (float32) with the shape of [batch_size, height, width,
+      channels].
+
+  Returns:
+    rgb_edge: RGB image (float32) with the shape of [batch_size, height, width,
+    channels] of the corresponding edge signals of each color channel in the rgb
+    input image.
+  """
+
+  # Padding the image and the mask (if given) before computing the image's
+  # edges
+  for c in range(3):  # for each color channel
+    if c == 0:
+      rgb_padded = tf.expand_dims(
+        tf.pad(rgb[:, :, :, c], [[0, 0], [1, 1], [1, 1]],
+               'SYMMETRIC'), axis=3)
+    else:
+      rgb_padded = tf.concat((rgb_padded,
+                              tf.expand_dims(tf.pad(
+                                rgb[:, :, :, c],
+                                [[0, 0], [1, 1], [1, 1]],
+                                'SYMMETRIC'), axis=3)), axis=3)
+
+  # Applying a serious of conv filters to compute the absolute deviation in
+  # the input image
+
+  for c in range(3):  # for each color channel
+    for f in range(8):  # number of filters
+      if f == 0:
+        channel_edge = tf.abs(tf.nn.conv2d(
+          tf.expand_dims(rgb_padded[:, :, :, c], axis=3),
+          filter=tf.expand_dims(edge_filters[0, :, :, :], axis=2),
+          strides=1, padding='VALID'))
+      else:
+        channel_edge = tf.concat((channel_edge, tf.abs(
+          tf.nn.conv2d(tf.expand_dims(rgb_padded[:, :, :, c], axis=3),
+                       filter=tf.expand_dims(edge_filters[f, :, :, :],
+                                             axis=2),
+                       strides=1, padding='VALID'))), axis=3)
+    channel_edge = tf.expand_dims(tf.reduce_sum(channel_edge, axis=3) / 8,
+                                  axis=3)
+    if c == 0:
+      rgb_edge = channel_edge
+    else:
+      rgb_edge = tf.concat((rgb_edge, channel_edge), axis=3)
+
+  return rgb_edge
+
+
+def compute_chroma_histogram(rgb, params):
+  """Main function of histogram computation.
+
+  This functions produces a 2D histogram of the log-chroma of a given image.
+
+  Args:
+    rgb: RGB image (float32) with the shape of [batch_size, height, width,
+      channels].
+    params: a dict with keys:
+    'first_bin': (float) location of the edge of the first histogram bin.
+    'bin_size': (float) size of each histogram bin.
+    'nbins': (int) number of histogram bins.
+
+  Returns:
+    N: a 2D histogram (float32) of the log-chroma of a given image with
+    the shape of [batch_size, height, width, channels]
+  """
+
+  batch_size = rgb.shape[0]
+
+  valid_pixels = tf.greater(tf.math.reduce_prod(rgb, axis=3), EPS)
+  first_bin = tf.convert_to_tensor(params['first_bin'], dtype=tf.float32)
+  bin_size = tf.convert_to_tensor(params['bin_size'], dtype=tf.float32)
+  nbins = tf.convert_to_tensor(params['nbins'], dtype=tf.int32)
+
+  for i in range(batch_size):
+    # Exclude any zero pixels (at any color channel)
+    valid_colors = tf.gather_nd(rgb[i, :, :, :],
+                                tf.where(valid_pixels[i, :, :]))
+    uv = rgb_to_uv(valid_colors)
+    ub = tf.cast(tf.math.floormod(
+      tf.round((uv[:, 0] - first_bin) / bin_size),
+      tf.cast(nbins, tf.float32)), tf.int32)
+    vb = tf.cast(tf.math.floormod(
+      tf.round((uv[:, 1] - first_bin) / bin_size),
+      tf.cast(nbins, tf.float32)), tf.int32)
+    indices = sub2ind(nbins, ub, vb)
+    if i == 0:
+      N = tf.expand_dims(tf.cast(tf.reshape(tf.math.bincount(
+        indices, minlength=nbins * nbins), [nbins, nbins, 1]),
+        dtype=tf.float32), axis=0)
+      N = N / tf.math.maximum(EPS, tf.reduce_sum(N))
+    else:
+      n = tf.expand_dims(tf.cast(tf.reshape(tf.math.bincount(
+        indices, minlength=nbins * nbins), [nbins, nbins, 1]),
+        dtype=tf.float32), axis=0)
+      n = n / tf.math.maximum(EPS, tf.reduce_sum(n))
+      N = tf.concat((N, n), axis=0)
+  return N
+
+
+def featurize_image(rgb, params):
+  """Produces 2D histograms of a given rgb image.
+
+  This functions produces a 2D histogram of the log-chroma of the input
+  image's colors and the edge image's colors.
+
+  Args:
+    rgb: RGB image (float32) with the shape of [batch_size, height, width,
+      channels].
+    params: a dict with keys:
+    'first_bin': (float) location of the edge of the first histogram bin.
+    'bin_size': (float) size of each histogram bin.
+    'nbins': (int) number of histogram bins.
+
+
+  Returns:
+    chroma_histograms: stack of 2D chroma histograms (float32) from the
+    filter bank. For each channel, the chroma histogram is generated from the
+    input as described below:
+      ch = 0: from RGB input.
+      ch = 1: from edge filter input.
+  """
+
+  N = compute_chroma_histogram(rgb, params)
+
+  edge_rgb = local_absolute_deviation(rgb)
+  N_e = compute_chroma_histogram(edge_rgb, params)
+  chroma_histograms = tf.concat((N, N_e), axis=3)
+
+  return chroma_histograms
+
+
 def data_preprocess(rgb, extended_feature, params):
   """Convert inputs to histogram features for TensorFlow.
 
@@ -77,6 +380,7 @@ def data_preprocess(rgb, extended_feature, params):
       'first_bin': (float) location of the edge of the first histogram bin.
       'bin_size': (float) size of each histogram bin.
       'nbins': (int) number of histogram bins.
+      'extended_feature_bins': (float32) a 1D vector of feature bin values.
 
   Returns:
     chroma_histograms: stack of 2D chroma histograms (float32) from the
@@ -85,11 +389,14 @@ def data_preprocess(rgb, extended_feature, params):
         ch = 0: from RGB input.
         ch = 1: from edge filter input.
     extended_features: A 1D vector (float32) with encoded extended feature
-      bucket weights.
+      bucket weights, in the shape [batch_size, extended_feature_bins].
   """
-  # TODO(fbleibel): implement this function
-  print(rgb, extended_feature, params)
-  return None
+
+  chroma_histograms = featurize_image(rgb, params)
+  extended_features = splat_non_uniform(
+    extended_feature, tf.convert_to_tensor(params['extended_feature_bins'],
+                                           dtype=tf.float32))
+  return chroma_histograms, extended_features
 
 
 def eval_features(features, filters_fft, bias):
@@ -295,37 +602,48 @@ def splat_non_uniform(x, bins):
   method takes NumPy arrays instead of TF tensors, and returns a Numpy array.
 
   Args:
-    x: A 1D vector of values being splatted, in the shape of [batch_size].
+    x: A 2D matrix of values being splatted, in the shape of [batch_size, 1].
     bins: 1D vector, in the shape of [N], where N is the number of bins.
 
   Returns:
-    A 2D matrix with interpolated weights in the shape of [batch_size, M], where
-    each row is the splat weights.
+    f: A 2D matrix with interpolated weights in the shape of [batch_size, N],
+      where each row is the splat weights.
   """
 
-  x = np.asarray(x)
-  bins = np.asarray(bins)
+  N = tf.size(bins)
+  bins = tf.expand_dims(bins, axis=0)
+  batch_size = x.shape[0]
+  if N == 1:
+    return tf.convert_to_tensor(np.ones((batch_size, 1)),
+                                dtype=tf.float32)
 
   # clamps the x into the boundary of bins
-  if (bins.ndim != 1 or x.ndim != 1 or bins.shape[0] <= 1 or x.shape[0] < 1):
-    raise ValueError('Input and output parameters does not meet requirement: '
-                     'x.shape={}, bin.shape={}'.format(x.shape, bins.shape))
+  x_clamp = tf.minimum(
+    tf.math.reduce_max(bins),
+    tf.maximum(tf.math.reduce_min(bins), x))
 
-  if bins.shape[0] == 1:
-    return np.ones((x.shape[0], 1))
+  idx_lo = tf.expand_dims(tf.minimum(tf.cast(tf.math.argmin(
+    tf.abs(tf.transpose(bins - x_clamp))), dtype=tf.int32), N - 2), axis=1)
 
-  clamped_x = np.clip(x, bins[0], bins[-1])
-  delta_x = clamped_x[:, np.newaxis] - bins
-  idx_lo = np.minimum(
-      delta_x.shape[1] - np.argmax(delta_x[:, ::-1] >= 0., axis=1) - 1,
-      bins.shape[0] - 2)
   idx_hi = idx_lo + 1
-  w_hi = (clamped_x - bins[idx_lo]) / (bins[idx_hi] - bins[idx_lo])
-  w_lo = 1 - w_hi
 
-  f = np.zeros((x.shape[0], bins.shape[0]))
-  f[range(x.shape[0]), idx_lo] = w_lo
-  f[range(x.shape[0]), idx_hi] = w_hi
+  low_bin_value = tf.gather(bins[0, :], idx_lo)
+  high_bin_value = tf.gather(bins[0, :], idx_hi)
+
+  w_high = tf.squeeze(
+    (x_clamp - low_bin_value) / (high_bin_value - low_bin_value),
+    axis=1)
+  w_low = 1. - w_high
+  indices = tf.tile(tf.expand_dims(tf.range(0, N), axis=0), [batch_size, 1])
+  extended_features_l = tf.sparse.SparseTensor(
+    indices=tf.where(indices == idx_lo), values=w_low,
+    dense_shape=[batch_size, N])
+  extended_features_h = tf.sparse.SparseTensor(
+    indices=tf.where(indices == idx_hi), values=w_high,
+    dense_shape=[batch_size, N])
+
+  f = tf.sparse.to_dense(extended_features_l) + \
+      tf.sparse.to_dense(extended_features_h)
 
   return f
 
@@ -426,7 +744,7 @@ def rgb_to_uv(rgb):
 
   deps = [tf.assert_greater_equal(rgb, tf.cast(0.0, dtype=rgb.dtype))]
   # Protects the value from division by 0
-  rgb = tf.maximum(rgb, sys.float_info.epsilon)
+  rgb = tf.maximum(rgb, EPS)
   with tf.control_dependencies(deps):
     log_rgb = tf.log(rgb)
     # u = log(g/r), v = log(g/b)
