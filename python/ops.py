@@ -13,10 +13,34 @@
 # limitations under the License.
 """FFCC TensorFlow ops."""
 import math
-import sys
-
+import itertools
 import numpy as np
 import tensorflow.compat.v1 as tf
+
+
+EPS = tf.constant(1e-9, dtype=tf.float32)
+
+
+def edge_kernel():
+  """Construct a set of 3x3 kernels for edge computation."""
+  filters = np.zeros((8, 3, 3, 1))
+  filters[:, 1, 1, :] = 1
+  offsets = [-1, 0, 1]
+  j = 0
+  for i, (dx, dy) in enumerate(itertools.product(offsets, repeat=2)):
+    if dx == 0 and dy == 0:
+      j += 1
+      continue
+    filters[i - j, 1 + dx, 1 + dy, 0] = -1
+  return tf.constant(filters, dtype=tf.float32)
+
+
+edge_filters = edge_kernel()
+
+
+def sub2ind(cols, r, c):
+  """Convert subscripts to linear indices"""
+  return r * cols + c
 
 
 def r2c(real):
@@ -42,7 +66,7 @@ def r2c_fft2(x):
   if ndims != 4:
     raise ValueError('Expecting ndims == 4, actual={}'.format(ndims))
   x_fft = tf.transpose(
-      tf.signal.fft2d(tf.transpose(r2c(x), [0, 3, 1, 2])), [0, 2, 3, 1])
+    tf.signal.fft2d(tf.transpose(r2c(x), [0, 3, 1, 2])), [0, 2, 3, 1])
   return x_fft
 
 
@@ -59,8 +83,146 @@ def c2r_ifft2(x_fft):
   if ndims != 4:
     raise ValueError('Expecting ndims == 4, actual={}'.format(ndims))
   return c2r(
-      tf.transpose(
-          tf.signal.ifft2d(tf.transpose(x_fft, [0, 3, 1, 2])), [0, 2, 3, 1]))
+    tf.transpose(
+      tf.signal.ifft2d(tf.transpose(x_fft, [0, 3, 1, 2])), [0, 2, 3, 1]))
+
+
+def local_absolute_deviation(rgb):
+  """Compute a Local Absolute Deviation in sliding 3x3 window fashion.
+
+  This functions computes the edge signal of a given rgb image.
+
+  Args:
+    rgb: RGB image (float32) with the shape of [batch_size, height, width,
+      channels].
+
+  Returns:
+    rgb_edge: RGB image (float32) with the shape of [batch_size, height, width,
+    channels] of the corresponding edge signals of each color channel in the rgb
+    input image.
+  """
+
+  # Padding the image and the mask (if given) before computing the image's
+  # edges
+  for c in range(3):  # for each color channel
+    if c == 0:
+      rgb_padded = tf.expand_dims(
+        tf.pad(rgb[:, :, :, c], [[0, 0], [1, 1], [1, 1]],
+               'SYMMETRIC'), axis=3)
+    else:
+      rgb_padded = tf.concat((rgb_padded,
+                              tf.expand_dims(tf.pad(
+                                rgb[:, :, :, c],
+                                [[0, 0], [1, 1], [1, 1]],
+                                'SYMMETRIC'), axis=3)), axis=3)
+
+  # Applying a serious of conv filters to compute the absolute deviation in
+  # the input image
+
+  for c in range(3):  # for each color channel
+    for f in range(8):  # number of filters
+      if f == 0:
+        channel_edge = tf.abs(tf.nn.conv2d(
+          tf.expand_dims(rgb_padded[:, :, :, c], axis=3),
+          filter=tf.expand_dims(edge_filters[0, :, :, :], axis=2),
+          strides=1, padding='VALID'))
+      else:
+        channel_edge = tf.concat((channel_edge, tf.abs(
+          tf.nn.conv2d(tf.expand_dims(rgb_padded[:, :, :, c], axis=3),
+                       filter=tf.expand_dims(edge_filters[f, :, :, :],
+                                             axis=2),
+                       strides=1, padding='VALID'))), axis=3)
+    channel_edge = tf.expand_dims(tf.reduce_sum(channel_edge, axis=3) / 8,
+                                  axis=3)
+    if c == 0:
+      rgb_edge = channel_edge
+    else:
+      rgb_edge = tf.concat((rgb_edge, channel_edge), axis=3)
+
+  return rgb_edge
+
+
+def compute_chroma_histogram(rgb, params):
+  """Main function of histogram computation.
+
+  This functions produces a 2D histogram of the log-chroma of a given image.
+
+  Args:
+    rgb: RGB image (float32) with the shape of [batch_size, height, width,
+      channels].
+    params: a dict with keys:
+    'first_bin': (float) location of the edge of the first histogram bin.
+    'bin_size': (float) size of each histogram bin.
+    'nbins': (int) number of histogram bins.
+
+  Returns:
+    N: a 2D histogram (float32) of the log-chroma of a given image with
+    the shape of [batch_size, height, width, channels]
+  """
+
+  batch_size = rgb.shape[0]
+
+  valid_pixels = tf.greater(tf.math.reduce_prod(rgb, axis=3), EPS)
+  first_bin = tf.convert_to_tensor(params['first_bin'], dtype=tf.float32)
+  bin_size = tf.convert_to_tensor(params['bin_size'], dtype=tf.float32)
+  nbins = tf.convert_to_tensor(params['nbins'], dtype=tf.int32)
+
+  for i in range(batch_size):
+    # Exclude any zero pixels (at any color channel)
+    valid_colors = tf.gather_nd(rgb[i, :, :, :],
+                                tf.where(valid_pixels[i, :, :]))
+    uv = rgb_to_uv(valid_colors)
+    ub = tf.cast(tf.math.floormod(
+      tf.round((uv[:, 0] - first_bin) / bin_size),
+      tf.cast(nbins, tf.float32)), tf.int32)
+    vb = tf.cast(tf.math.floormod(
+      tf.round((uv[:, 1] - first_bin) / bin_size),
+      tf.cast(nbins, tf.float32)), tf.int32)
+    indices = sub2ind(nbins, ub, vb)
+    if i == 0:
+      N = tf.expand_dims(tf.cast(tf.reshape(tf.math.bincount(
+        indices, minlength=nbins * nbins), [nbins, nbins, 1]),
+        dtype=tf.float32), axis=0)
+      N = N / tf.math.maximum(EPS, tf.reduce_sum(N))
+    else:
+      n = tf.expand_dims(tf.cast(tf.reshape(tf.math.bincount(
+        indices, minlength=nbins * nbins), [nbins, nbins, 1]),
+        dtype=tf.float32), axis=0)
+      n = n / tf.math.maximum(EPS, tf.reduce_sum(n))
+      N = tf.concat((N, n), axis=0)
+  return N
+
+
+def featurize_image(rgb, params):
+  """Produces 2D histograms of a given rgb image.
+
+  This functions produces a 2D histogram of the log-chroma of the input
+  image's colors and the edge image's colors.
+
+  Args:
+    rgb: RGB image (float32) with the shape of [batch_size, height, width,
+      channels].
+    params: a dict with keys:
+    'first_bin': (float) location of the edge of the first histogram bin.
+    'bin_size': (float) size of each histogram bin.
+    'nbins': (int) number of histogram bins.
+
+
+  Returns:
+    chroma_histograms: stack of 2D chroma histograms (float32) from the
+    filter bank. For each channel, the chroma histogram is generated from the
+    input as described below:
+      ch = 0: from RGB input.
+      ch = 1: from edge filter input.
+  """
+
+  N = compute_chroma_histogram(rgb, params)
+
+  edge_rgb = local_absolute_deviation(rgb)
+  N_e = compute_chroma_histogram(edge_rgb, params)
+  chroma_histograms = tf.concat((N, N_e), axis=3)
+
+  return chroma_histograms
 
 
 def data_preprocess(rgb, extended_feature, params):
@@ -77,6 +239,7 @@ def data_preprocess(rgb, extended_feature, params):
       'first_bin': (float) location of the edge of the first histogram bin.
       'bin_size': (float) size of each histogram bin.
       'nbins': (int) number of histogram bins.
+      'extended_feature_bins': (float32) a 1D vector of feature bin values.
 
   Returns:
     chroma_histograms: stack of 2D chroma histograms (float32) from the
@@ -85,11 +248,14 @@ def data_preprocess(rgb, extended_feature, params):
         ch = 0: from RGB input.
         ch = 1: from edge filter input.
     extended_features: A 1D vector (float32) with encoded extended feature
-      bucket weights.
+      bucket weights, in the shape [batch_size, extended_feature_bins].
   """
-  # TODO(fbleibel): implement this function
-  print(rgb, extended_feature, params)
-  return None
+
+  chroma_histograms = featurize_image(rgb, params)
+  extended_features = splat_non_uniform(
+    extended_feature, tf.convert_to_tensor(params['extended_feature_bins'],
+                                           dtype=tf.float32))
+  return chroma_histograms, extended_features
 
 
 def eval_features(features, filters_fft, bias):
@@ -118,24 +284,24 @@ def eval_features(features, filters_fft, bias):
   num_channels = feature_shape[3]
 
   deps = [
-      tf.assert_equal(batch_size,
-                      tf.shape(filters_fft)[0]),
-      tf.assert_equal(height,
-                      tf.shape(filters_fft)[1]),
-      tf.assert_equal(width,
-                      tf.shape(filters_fft)[2]),
-      tf.assert_equal(num_channels,
-                      tf.shape(filters_fft)[3]),
-      tf.assert_equal(batch_size,
-                      tf.shape(bias)[0]),
-      tf.assert_equal(height,
-                      tf.shape(bias)[1]),
-      tf.assert_equal(width,
-                      tf.shape(bias)[2]),
+    tf.assert_equal(batch_size,
+                    tf.shape(filters_fft)[0]),
+    tf.assert_equal(height,
+                    tf.shape(filters_fft)[1]),
+    tf.assert_equal(width,
+                    tf.shape(filters_fft)[2]),
+    tf.assert_equal(num_channels,
+                    tf.shape(filters_fft)[3]),
+    tf.assert_equal(batch_size,
+                    tf.shape(bias)[0]),
+    tf.assert_equal(height,
+                    tf.shape(bias)[1]),
+    tf.assert_equal(width,
+                    tf.shape(bias)[2]),
   ]
   with tf.control_dependencies(deps):
     fx_fft = tf.reduce_sum(
-        r2c_fft2(features) * filters_fft, axis=3, keepdims=True)
+      r2c_fft2(features) * filters_fft, axis=3, keepdims=True)
     fx = c2r_ifft2(fx_fft)
 
     # Squeeze the last dimension from [batch, n, n, 1] to [batch, n , n]
@@ -158,7 +324,7 @@ def softmax2(h):
     raise ValueError('Expecting ndims = 3, actual={}'.format(ndims))
   _, height, width = h.get_shape().as_list()
   return tf.reshape(
-      tf.nn.softmax(tf.reshape(h, [-1, width * height])), [-1, height, width])
+    tf.nn.softmax(tf.reshape(h, [-1, width * height])), [-1, height, width])
 
 
 def bivariate_von_mises(pmf):
@@ -185,12 +351,12 @@ def bivariate_von_mises(pmf):
   ndims = pmf.get_shape().ndims
   sums = tf.reduce_sum(pmf, axis=list(range(1, ndims)), keepdims=True)
   deps = [
-      # Expect 3-channel input
-      tf.assert_equal(ndims, 3),
-      # Expect the shape is a square
-      tf.assert_equal(pmf_shape[1], pmf_shape[2]),
-      # Expect the sum of PMF is 1
-      tf.assert_near(sums, 1, atol=1e-4)
+    # Expect 3-channel input
+    tf.assert_equal(ndims, 3),
+    # Expect the shape is a square
+    tf.assert_equal(pmf_shape[1], pmf_shape[2]),
+    # Expect the sum of PMF is 1
+    tf.assert_near(sums, 1, atol=1e-4)
   ]
 
   with tf.control_dependencies(deps):
@@ -200,7 +366,7 @@ def bivariate_von_mises(pmf):
     size = pmf_shape[1]
     angle_step = 2. * math.pi / size
     angles = tf.reshape(
-        tf.range(size, dtype=tf.float32) * angle_step, [1, size])
+      tf.range(size, dtype=tf.float32) * angle_step, [1, size])
 
     cos_angles = tf.cos(angles)
     sin_angles = tf.sin(angles)
@@ -243,17 +409,17 @@ def bivariate_von_mises(pmf):
     sum1 = lambda x: tf.reduce_sum(x, axis=-1)
     u_expectation = sum1(sum_u * u_wrapped)
     v_expectation = sum1(sum_v * v_wrapped)
-    u_var = sum1(sum_u * u_wrapped**2) - u_expectation**2
-    v_var = sum1(sum_v * v_wrapped**2) - v_expectation**2
+    u_var = sum1(sum_u * u_wrapped ** 2) - u_expectation ** 2
+    v_var = sum1(sum_v * v_wrapped ** 2) - v_expectation ** 2
     uv_expectation = tf.linalg.matvec(
-        tf.linalg.matvec(pmf, u_wrapped, transpose_a=True)[..., tf.newaxis, :],
-        v_wrapped)[..., 0]
+      tf.linalg.matvec(pmf, u_wrapped, transpose_a=True)[..., tf.newaxis, :],
+      v_wrapped)[..., 0]
     uv_covar = uv_expectation - u_expectation * v_expectation
 
     # Construct covariance matrices.
     sigma = tf.reshape(
-        tf.stack([u_var, uv_covar, uv_covar, v_var], axis=1), [-1, 2, 2],
-        name='sigma_idx')
+      tf.stack([u_var, uv_covar, uv_covar, v_var], axis=1), [-1, 2, 2],
+      name='sigma_idx')
     return mu, sigma
 
 
@@ -279,11 +445,11 @@ def idx_to_uv(mu_idx, sigma_idx, step_size, offset):
   sigma_idx.shape.assert_is_compatible_with([None, 2, 2])
 
   mu = tf.add(
-      tf.multiply(tf.cast(mu_idx, dtype=tf.float32), step_size),
-      offset,
-      name='mu')
+    tf.multiply(tf.cast(mu_idx, dtype=tf.float32), step_size),
+    offset,
+    name='mu')
   sigma = tf.multiply(
-      tf.cast(sigma_idx, dtype=tf.float32), step_size**2, name='sigma')
+    tf.cast(sigma_idx, dtype=tf.float32), step_size ** 2, name='sigma')
   return mu, sigma
 
 
@@ -295,37 +461,48 @@ def splat_non_uniform(x, bins):
   method takes NumPy arrays instead of TF tensors, and returns a Numpy array.
 
   Args:
-    x: A 1D vector of values being splatted, in the shape of [batch_size].
+    x: A 2D matrix of values being splatted, in the shape of [batch_size, 1].
     bins: 1D vector, in the shape of [N], where N is the number of bins.
 
   Returns:
-    A 2D matrix with interpolated weights in the shape of [batch_size, M], where
-    each row is the splat weights.
+    f: A 2D matrix with interpolated weights in the shape of [batch_size, N],
+      where each row is the splat weights.
   """
 
-  x = np.asarray(x)
-  bins = np.asarray(bins)
+  N = tf.size(bins)
+  bins = tf.expand_dims(bins, axis=0)
+  batch_size = x.shape[0]
+  if N == 1:
+    return tf.convert_to_tensor(np.ones((batch_size, 1)),
+                                dtype=tf.float32)
 
   # clamps the x into the boundary of bins
-  if (bins.ndim != 1 or x.ndim != 1 or bins.shape[0] <= 1 or x.shape[0] < 1):
-    raise ValueError('Input and output parameters does not meet requirement: '
-                     'x.shape={}, bin.shape={}'.format(x.shape, bins.shape))
+  x_clamp = tf.minimum(
+    tf.math.reduce_max(bins),
+    tf.maximum(tf.math.reduce_min(bins), x))
 
-  if bins.shape[0] == 1:
-    return np.ones((x.shape[0], 1))
+  idx_lo = tf.expand_dims(tf.minimum(tf.cast(tf.math.argmin(
+    tf.abs(tf.transpose(bins - x_clamp))), dtype=tf.int32), N - 2), axis=1)
 
-  clamped_x = np.clip(x, bins[0], bins[-1])
-  delta_x = clamped_x[:, np.newaxis] - bins
-  idx_lo = np.minimum(
-      delta_x.shape[1] - np.argmax(delta_x[:, ::-1] >= 0., axis=1) - 1,
-      bins.shape[0] - 2)
   idx_hi = idx_lo + 1
-  w_hi = (clamped_x - bins[idx_lo]) / (bins[idx_hi] - bins[idx_lo])
-  w_lo = 1 - w_hi
 
-  f = np.zeros((x.shape[0], bins.shape[0]))
-  f[range(x.shape[0]), idx_lo] = w_lo
-  f[range(x.shape[0]), idx_hi] = w_hi
+  low_bin_value = tf.gather(bins[0, :], idx_lo)
+  high_bin_value = tf.gather(bins[0, :], idx_hi)
+
+  w_high = tf.squeeze(
+    (x_clamp - low_bin_value) / (high_bin_value - low_bin_value),
+    axis=1)
+  w_low = 1. - w_high
+  indices = tf.tile(tf.expand_dims(tf.range(0, N), axis=0), [batch_size, 1])
+  extended_features_l = tf.sparse.SparseTensor(
+    indices=tf.where(indices == idx_lo), values=w_low,
+    dense_shape=[batch_size, N])
+  extended_features_h = tf.sparse.SparseTensor(
+    indices=tf.where(indices == idx_hi), values=w_high,
+    dense_shape=[batch_size, N])
+
+  f = tf.sparse.to_dense(extended_features_l) + \
+      tf.sparse.to_dense(extended_features_h)
 
   return f
 
@@ -354,14 +531,14 @@ def uv_to_pmf(uv, step_size, offset, n):
 
   def uv_fmin():
     return tf.Print(uv, [
-        'WARNING: uv_to_pmf() given values of ',
-        tf.reduce_min(uv), ' < ', uv_min, ', clipping.'
+      'WARNING: uv_to_pmf() given values of ',
+      tf.reduce_min(uv), ' < ', uv_min, ', clipping.'
     ])
 
   def uv_fmax():
     return tf.Print(uv, [
-        'WARNING: uv_to_pmf() given values of ',
-        tf.reduce_max(uv), ' > ', uv_max, ', clipping.'
+      'WARNING: uv_to_pmf() given values of ',
+      tf.reduce_max(uv), ' > ', uv_max, ', clipping.'
     ])
 
   uv = tf.cond(tf.reduce_any(uv < uv_min), uv_fmin, lambda: uv)
@@ -372,10 +549,10 @@ def uv_to_pmf(uv, step_size, offset, n):
   uv.shape.assert_is_compatible_with([None, 2])
   if not np.isscalar(step_size):
     raise ValueError('`step_size` must be a scalar, but is of type {}'.format(
-        type(step_size)))
+      type(step_size)))
   if not np.isscalar(offset):
     raise ValueError('`step_size` must be a scalar, but is of type {}'.format(
-        type(offset)))
+      type(offset)))
 
   uv_idx = (uv - offset) / step_size
 
@@ -403,9 +580,9 @@ def uv_to_pmf(uv, step_size, offset, n):
   idx_11 = tf.stack([batch_idx, uv_idx_hi[:, 0], uv_idx_hi[:, 1]], axis=1)
 
   sparse = tf.SparseTensor(
-      indices=tf.concat([idx_00, idx_01, idx_10, idx_11], axis=0),
-      values=tf.concat([w_00, w_01, w_10, w_11], axis=0),
-      dense_shape=[batch_size, n, n])
+    indices=tf.concat([idx_00, idx_01, idx_10, idx_11], axis=0),
+    values=tf.concat([w_00, w_01, w_10, w_11], axis=0),
+    dense_shape=[batch_size, n, n])
   return tf.sparse.to_dense(tf.sparse_reorder(sparse))
 
 
@@ -426,7 +603,7 @@ def rgb_to_uv(rgb):
 
   deps = [tf.assert_greater_equal(rgb, tf.cast(0.0, dtype=rgb.dtype))]
   # Protects the value from division by 0
-  rgb = tf.maximum(rgb, sys.float_info.epsilon)
+  rgb = tf.maximum(rgb, EPS)
   with tf.control_dependencies(deps):
     log_rgb = tf.log(rgb)
     # u = log(g/r), v = log(g/b)
@@ -452,9 +629,9 @@ def uv_to_rgb(uv):
   # u = log(g/r), v = log(g/b)
   rb = tf.exp(-uv)
   rgb = tf.stack(
-      [rb[:, 0],
-       tf.ones(shape=(tf.shape(rb)[0]), dtype=uv.dtype), rb[:, 1]],
-      axis=1)
+    [rb[:, 0],
+     tf.ones(shape=(tf.shape(rb)[0]), dtype=uv.dtype), rb[:, 1]],
+    axis=1)
 
   return rgb / tf.norm(rgb, axis=1, keepdims=True)
 
@@ -464,7 +641,7 @@ def apply_wb(rgb, uv):
 
   Args:
     rgb: float, the RGB images in the shape of [batch_size, height, width,
-      channel].
+    channel].
     uv: float, white point in log-UV coordinate in the shape of [batch_size, 2].
 
   Returns:
@@ -479,9 +656,9 @@ def apply_wb(rgb, uv):
 
   rb_gains = tf.exp(uv)
   wb_gains = tf.stack([
-      rb_gains[:, 0],
-      tf.ones(shape=tf.shape(rb_gains)[0], dtype=rb_gains.dtype), rb_gains[:, 1]
+    rb_gains[:, 0],
+    tf.ones(shape=tf.shape(rb_gains)[0], dtype=rb_gains.dtype), rb_gains[:, 1]
   ],
-                      axis=1)
+    axis=1)
 
   return rgb * wb_gains[:, tf.newaxis, tf.newaxis, :]
