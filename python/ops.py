@@ -90,7 +90,7 @@ def c2r_ifft2(x_fft):
 def local_absolute_deviation(rgb):
   """Compute a Local Absolute Deviation in sliding 3x3 window fashion.
 
-  This functions computes the edge signal of the given rgb image,
+  This function computes the edge signal of the given rgb image,
     as described in Eq. 19.
 
   Args:
@@ -491,13 +491,13 @@ def uv_to_pmf(uv, step_size, offset, n):
   uv_max = offset + (n - 1) * step_size
 
   def uv_fmin():
-    return tf.compat.v1.Print(uv, [
+    return tf.print(uv, [
       'WARNING: uv_to_pmf() given values of ',
       tf.reduce_min(uv), ' < ', uv_min, ', clipping.'
     ])
 
   def uv_fmax():
-    return tf.compat.v1.Print(uv, [
+    return tf.print(uv, [
       'WARNING: uv_to_pmf() given values of ',
       tf.reduce_max(uv), ' > ', uv_max, ', clipping.'
     ])
