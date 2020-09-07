@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Ellipse utilities."""
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 
 
 def _check_inputs(mat, vec):
@@ -119,7 +119,7 @@ def project(x, w_mat, b_vec):
   _check_inputs(w_mat, b_vec)
 
   d = distance(x, w_mat, b_vec)
-  scale = tf.rsqrt(tf.maximum(d, 1))
+  scale = tf.compat.v1.rsqrt(tf.maximum(d, 1))
   _, c_vec = general_to_standard(w_mat, b_vec)
   y = scale[:, tf.newaxis] * x + (1 - scale[:, tf.newaxis]) * tf.cast(
       c_vec[tf.newaxis], x.dtype)

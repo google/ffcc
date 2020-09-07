@@ -18,7 +18,7 @@ import numpy as np
 import tensorflow as tf
 
 
-EPS = tf.constant(1e-9, dtype=tf.float32)
+EPS = 1e-9
 
 
 def edge_kernel():
@@ -50,7 +50,7 @@ def r2c(real):
 
 def c2r(comp):
   """Complex to real."""
-  return tf.real(comp)
+  return tf.math.real(comp)
 
 
 def r2c_fft2(x):
@@ -114,11 +114,12 @@ def local_absolute_deviation(rgb):
   edge_filters = edge_kernel()
   filtered = tf.nn.depthwise_conv2d(rgb_padded, edge_filters,
                                     strides=[1, 1, 1, 1], padding='VALID')
-  filtered = tf.reshape(filtered, (filtered.shape[0], filtered.shape[1],
+  filtered = tf.reshape(filtered, (-1, filtered.shape[1],
                                    filtered.shape[2], 3, 8))
   abs_diff = tf.abs(filtered)
   rgb_edge = tf.math.reduce_mean(abs_diff, axis=-1)
   return rgb_edge
+
 
 def compute_chroma_histogram(rgb, params):
   """This function produces a 2D histogram of the log-chroma of a given image.
@@ -436,7 +437,7 @@ def splat_non_uniform(x, bins):
 
   bin_num = tf.size(bins)
   bins = tf.expand_dims(bins, axis=0)
-  batch_size = x.shape[0]
+  batch_size = tf.shape(x)[0]
 
   # clamps the x into the boundary of bins
   x_clamp = tf.clip_by_value(x, tf.math.reduce_min(bins), tf.math.reduce_max(
@@ -452,8 +453,8 @@ def splat_non_uniform(x, bins):
   low_bin_value = tf.gather_nd(bins[0, :], idx_lo)
   high_bin_value = tf.gather_nd(bins[0, :], idx_hi)
 
-  w_high = tf.reshape((tf.squeeze(x_clamp) - low_bin_value) /
-                      (tf.maximum(high_bin_value - low_bin_value, EPS)), -1)
+  w_high = tf.squeeze((tf.squeeze(x_clamp) - low_bin_value) /
+                      (tf.maximum(high_bin_value - low_bin_value, EPS)))
   w_low = 1.0 - w_high
   indices = tf.tile(tf.expand_dims(tf.range(0, bin_num), axis=0),
                     [batch_size, 1])
@@ -570,9 +571,11 @@ def rgb_to_uv(rgb):
   rgb_reshaped = tf.maximum(rgb_reshaped, EPS)
   with tf.control_dependencies(deps):
     log_rgb = tf.math.log(rgb_reshaped)
-    u = tf.reshape(log_rgb[:, 1] - log_rgb[:, 0], rgb.shape[:-1])
-    v = tf.reshape(log_rgb[:, 1] - log_rgb[:, 2], rgb.shape[:-1])
-    return tf.stack([u, v], axis=tf.rank(rgb) - 1)
+    u = tf.reshape(log_rgb[:, 1] - log_rgb[:, 0],
+                   tf.squeeze(tf.stack(([-1], rgb.shape[1:-1]), axis=0)))
+    v = tf.reshape(log_rgb[:, 1] - log_rgb[:, 2],
+                   tf.squeeze(tf.stack(([-1], rgb.shape[1:-1]), axis=0)))
+    return tf.stack([u, v], axis=-1)
 
 
 def uv_to_rgb(uv):

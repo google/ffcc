@@ -14,9 +14,9 @@
 """Losses for FFCC."""
 import math
 import sys
-from . import ops
+from ffcc import ops
 import numpy as np
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 import tensorflow_probability as tfp
 
 
@@ -43,8 +43,8 @@ def safe_acosd(x):
   """
   # Check that x is roughly within [-1, 1].
   with tf.control_dependencies([
-      tf.assert_greater_equal(x, tf.cast(-1.0 - 1e-6, dtype=x.dtype)),
-      tf.assert_less_equal(x, tf.cast(1.0 + 1e-6, dtype=x.dtype))
+      tf.debugging.assert_greater_equal(x, tf.cast(-1.0 - 1e-6, dtype=x.dtype)),
+      tf.debugging.assert_less_equal(x, tf.cast(1.0 + 1e-6, dtype=x.dtype))
   ]):
     x = tf.clip_by_value(x, -1.0, 1.0)
     angle_shrink = tf.acos(0.9999999 * x)
@@ -70,15 +70,15 @@ def angular_error(pred_illum_rgb, true_illum_rgb):
   true_magnitude_sq = tf.reduce_sum(tf.square(true_illum_rgb), axis=1)
 
   with tf.control_dependencies([
-      tf.assert_greater(pred_magnitude_sq,
+      tf.debugging.assert_greater(pred_magnitude_sq,
                         tf.cast(1e-8, dtype=pred_magnitude_sq.dtype)),
-      tf.assert_greater(true_magnitude_sq,
+      tf.debugging.assert_greater(true_magnitude_sq,
                         tf.cast(1e-8, dtype=true_magnitude_sq.dtype))
   ]):
     numer = tf.reduce_sum(tf.multiply(pred_illum_rgb, true_illum_rgb), axis=1)
     denom_sq = tf.multiply(pred_magnitude_sq, true_magnitude_sq)
     epsilon = sys.float_info.epsilon
-    ratio = (numer + epsilon) * tf.rsqrt(denom_sq + epsilon * epsilon)
+    ratio = (numer + epsilon) * tf.compat.v1.rsqrt(denom_sq + epsilon * epsilon)
     return safe_acosd(ratio)
 
 
@@ -103,7 +103,8 @@ def reproduction_error(pred_illum_rgb, true_illum_rgb):
   ratio = true_illum_rgb / (pred_illum_rgb + epsilon)
   numer = tf.reduce_sum(ratio, axis=1)
   denom_sq = 3 * tf.reduce_sum(ratio**2, axis=1)
-  angle_prod = (numer + epsilon) * tf.rsqrt(denom_sq + epsilon * epsilon)
+  angle_prod = (numer + epsilon) * tf.compat.v1.rsqrt(
+    denom_sq + epsilon * epsilon)
   return safe_acosd(angle_prod)
 
 
@@ -132,7 +133,8 @@ def anisotropic_reproduction_error(pred_illum_rgb, true_illum_rgb,
   denom_sq = tf.reduce_sum(
       true_scene_rgb**2, axis=1) * tf.reduce_sum(
           true_scene_rgb**2 * ratio**2, axis=1)
-  angle_prod = (numer + epsilon) * tf.rsqrt(denom_sq + epsilon * epsilon)
+  angle_prod = (numer + epsilon) * tf.compat.v1.rsqrt(
+    denom_sq + epsilon * epsilon)
   return safe_acosd(angle_prod)
 
 
@@ -182,7 +184,7 @@ def gaussian_negative_log_likelihood(pred_illum_uv, pred_illum_uv_sigma,
   """
   det = tf.linalg.det(pred_illum_uv_sigma)
   with tf.control_dependencies(
-      [tf.assert_greater(det, tf.cast(0.0, dtype=det.dtype))]):
+      [tf.debugging.assert_greater(det, tf.cast(0.0, dtype=det.dtype))]):
     pred_pdf = tfp.distributions.MultivariateNormalFullCovariance(
         loc=pred_illum_uv, covariance_matrix=pred_illum_uv_sigma)
   return -pred_pdf.log_prob(true_illum_uv)

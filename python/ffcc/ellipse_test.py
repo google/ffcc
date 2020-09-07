@@ -13,10 +13,10 @@
 # limitations under the License.
 """Tests for ellipse.py."""
 
-from . import ellipse
+from ffcc import ellipse
 import numpy as np
 from scipy.linalg import expm
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 
 
 class EllipseTest(tf.test.TestCase):

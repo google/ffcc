@@ -15,7 +15,7 @@
 
 import math
 import numpy as np
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 
 
 def fftshift(f, axis):
@@ -50,11 +50,12 @@ def fft2_to_vec(f):
   Returns:
     1D real vector in the shape of [batch_size, n*n, channels].
   """
-  f_real = tf.real(f)
-  f_imag = tf.imag(f)
+  f_real = tf.math.real(f)
+  f_imag = tf.math.imag(f)
 
   _, height, width, channels = f.get_shape().as_list()
-  deps = [tf.assert_equal(width, height), tf.assert_equal(width % 2, 0)]
+  deps = [tf.debugging.assert_equal(width, height),
+          tf.debugging.assert_equal(width % 2, 0)]
 
   with tf.control_dependencies(deps):
     n = width
@@ -104,8 +105,9 @@ def vec_to_fft2(v):
   _, n_square, channels = v.get_shape().as_list()
   n = int(math.sqrt(n_square))
 
-  dtype = tf.real(v).dtype
-  deps = [tf.assert_equal(n * n, n_square), tf.assert_equal(n % 2, 0)]
+  dtype = tf.math.real(v).dtype
+  deps = [tf.debugging.assert_equal(n * n, n_square),
+          tf.debugging.assert_equal(n % 2, 0)]
   with tf.control_dependencies(deps):
     batch_size = tf.shape(v)[0]
 
@@ -151,8 +153,8 @@ def vec_to_fft2(v):
 
     # Constructs the slice [:, :, s+1:, :]
     f_complex_right = tf.concat([
-        tf.reverse(tf.conj(f_complex_left[:, 0:1, 1:s, :]), axis=[2]),
-        tf.reverse(tf.conj(f_complex_left[:, 1:, 1:s, :]), axis=[1, 2])
+        tf.reverse(tf.compat.v1.conj(f_complex_left[:, 0:1, 1:s, :]), axis=[2]),
+        tf.reverse(tf.compat.v1.conj(f_complex_left[:, 1:, 1:s, :]), axis=[1, 2])
     ],
                                 axis=1)
 
@@ -216,7 +218,7 @@ def compute_preconditioner_vec(n, weight_tv, weight_l2):
 
   regularizer = compute_regularizer_fft(n, weight_tv, weight_l2)
   scaling = np.sqrt(np.sqrt(2.))
-  preconditioner = scaling * tf.rsqrt(
+  preconditioner = scaling * tf.compat.v1.rsqrt(
       fft2_to_vec(tf.complex(regularizer, regularizer)[tf.newaxis])[0, :, :])
   s = n // 2
   mask = np.zeros(shape=(n**2), dtype=bool)
