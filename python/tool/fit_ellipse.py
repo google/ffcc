@@ -22,9 +22,9 @@ from __future__ import print_function
 
 import csv
 
-from . import ellipse
-from . import input as ffcc_input
-from . import ops
+from ffcc import ellipse
+from ffcc import input as ffcc_input
+from ffcc import ops
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np

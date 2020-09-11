@@ -153,8 +153,8 @@ def vec_to_fft2(v):
 
     # Constructs the slice [:, :, s+1:, :]
     f_complex_right = tf.concat([
-        tf.reverse(tf.compat.v1.conj(f_complex_left[:, 0:1, 1:s, :]), axis=[2]),
-        tf.reverse(tf.compat.v1.conj(f_complex_left[:, 1:, 1:s, :]), axis=[1, 2])
+        tf.reverse(tf.math.conj(f_complex_left[:, 0:1, 1:s, :]), axis=[2]),
+        tf.reverse(tf.math.conj(f_complex_left[:, 1:, 1:s, :]), axis=[1, 2])
     ],
                                 axis=1)
 
@@ -218,8 +218,8 @@ def compute_preconditioner_vec(n, weight_tv, weight_l2):
 
   regularizer = compute_regularizer_fft(n, weight_tv, weight_l2)
   scaling = np.sqrt(np.sqrt(2.))
-  preconditioner = scaling * tf.compat.v1.rsqrt(
-      fft2_to_vec(tf.complex(regularizer, regularizer)[tf.newaxis])[0, :, :])
+  preconditioner = scaling * tf.math.rsqrt(
+    fft2_to_vec(tf.complex(regularizer, regularizer)[tf.newaxis])[0, :, :])
   s = n // 2
   mask = np.zeros(shape=(n**2), dtype=bool)
   mask[[0, s, s + 1, n + 1]] = True

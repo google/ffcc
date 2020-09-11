@@ -95,7 +95,7 @@ def distance(x, w_mat, b_vec):
 
   Returns:
     An output tensor in the shape of [batch_size] that corresponds to the
-    ellipse distance of each x[i, :].
+      ellipse distance of each x[i, :].
   """
   _check_inputs(w_mat, b_vec)
   v = tf.linalg.matmul(x, tf.cast(w_mat, x.dtype), transpose_b=True) + b_vec
@@ -119,7 +119,7 @@ def project(x, w_mat, b_vec):
   _check_inputs(w_mat, b_vec)
 
   d = distance(x, w_mat, b_vec)
-  scale = tf.compat.v1.rsqrt(tf.maximum(d, 1))
+  scale = tf.math.rsqrt(tf.maximum(d, 1))
   _, c_vec = general_to_standard(w_mat, b_vec)
   y = scale[:, tf.newaxis] * x + (1 - scale[:, tf.newaxis]) * tf.cast(
       c_vec[tf.newaxis], x.dtype)

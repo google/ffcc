@@ -78,7 +78,7 @@ def angular_error(pred_illum_rgb, true_illum_rgb):
     numer = tf.reduce_sum(tf.multiply(pred_illum_rgb, true_illum_rgb), axis=1)
     denom_sq = tf.multiply(pred_magnitude_sq, true_magnitude_sq)
     epsilon = sys.float_info.epsilon
-    ratio = (numer + epsilon) * tf.compat.v1.rsqrt(denom_sq + epsilon * epsilon)
+    ratio = (numer + epsilon) * tf.math.rsqrt(denom_sq + epsilon * epsilon)
     return safe_acosd(ratio)
 
 
@@ -103,8 +103,7 @@ def reproduction_error(pred_illum_rgb, true_illum_rgb):
   ratio = true_illum_rgb / (pred_illum_rgb + epsilon)
   numer = tf.reduce_sum(ratio, axis=1)
   denom_sq = 3 * tf.reduce_sum(ratio**2, axis=1)
-  angle_prod = (numer + epsilon) * tf.compat.v1.rsqrt(
-    denom_sq + epsilon * epsilon)
+  angle_prod = (numer + epsilon) * tf.math.rsqrt(denom_sq + epsilon * epsilon)
   return safe_acosd(angle_prod)
 
 
@@ -133,8 +132,7 @@ def anisotropic_reproduction_error(pred_illum_rgb, true_illum_rgb,
   denom_sq = tf.reduce_sum(
       true_scene_rgb**2, axis=1) * tf.reduce_sum(
           true_scene_rgb**2 * ratio**2, axis=1)
-  angle_prod = (numer + epsilon) * tf.compat.v1.rsqrt(
-    denom_sq + epsilon * epsilon)
+  angle_prod = (numer + epsilon) * tf.math.rsqrt(denom_sq + epsilon * epsilon)
   return safe_acosd(angle_prod)
 
 

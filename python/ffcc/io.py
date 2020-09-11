@@ -19,14 +19,16 @@ import tensorflow as tf
 import random
 
 
-def read_image_data(scene_name, dir_path):
+NUM_CROSS_VALIDATION_FOLDS = 3
+
+def read_image_data(scene_prefix, dir_path):
   r"""Reads scene data from the directory.
 
   Args:
-    scene_name: scene name (e.g., '000001')
+    scene_prefix: scene name (e.g., '000001')
     dir_path: directory path that contains the input data. If the
-    scene_name was '000001', for example, then the directory should contain
-    the following files:
+    scene_prefix was '000001', for example, then the directory should contain
+      the following files:
             000001.png                        # Linear RGB image
             000001.txt                        # color of the illuminant in RGB
     ----------------------- optional files ---------------------------------
@@ -36,62 +38,62 @@ def read_image_data(scene_name, dir_path):
   Returns:
     rgb_illuminant: color of the illuminant in RGB (float32).
     weight: weight of this training set (float32). If not
-      'scene_name_weight.txt' does not exist, it will be set to 1.
+      'scene_prefix_weight.txt' does not exist, it will be set to 1.
     rgb: RGB image (float32)
     extended_feature: value of the extended feature for this sample (
-      float32). If not 'scene_name_extended_feature.txt' does not exist,
-      it will be set to 1.
+      float32). If 'scene_prefix_extended_feature.txt' does not exist, it will
+      be set to 1.
   """
   # load the weight if the weight file exists
-  if tf.io.gfile.exists(os.path.join(dir_path, scene_name + '_weight.txt')):
-    weight = np.loadtxt(os.path.join(dir_path, scene_name + '_weight.txt'),
+  if tf.io.gfile.exists(os.path.join(dir_path, scene_prefix + '_weight.txt')):
+    weight = np.loadtxt(os.path.join(dir_path, scene_prefix + '_weight.txt'),
                         dtype=np.float32)
   else:
     weight = np.float32(1.0)
   # load the extended feature if the weight file exists
   if tf.io.gfile.exists(os.path.join(dir_path,
-                                     scene_name + '_extended_feature.txt')):
+                                     scene_prefix + '_extended_feature.txt')):
     extended_feature = np.loadtxt(os.path.join(
-      dir_path, scene_name + '_extended_feature.txt'), dtype=np.float32)
+      dir_path, scene_prefix + '_extended_feature.txt'), dtype=np.float32)
   else:
     extended_feature = np.float32(1.0)
   # load image and illuminant data
   rgb = tf.io.decode_image(tf.io.read_file(
-    os.path.join(dir_path, scene_name + '.png')), dtype=tf.dtypes.uint16)
+    os.path.join(dir_path, scene_prefix + '.png')), dtype=tf.dtypes.uint16)
   normalized = tf.cast(rgb, dtype=tf.float32) / tf.uint16.max
-  tf.compat.v1.disable_eager_execution()
-  rgb = normalized.eval(session=tf.compat.v1.Session())
+  sess = tf.compat.v1.Session()
+  with sess:
+    rgb = sess.run(normalized)
   # Make sure the illuminant is unit vector.
   rgb_illuminant = np.loadtxt(
-    os.path.join(dir_path, scene_name + '.txt'), dtype=np.float32)
+    os.path.join(dir_path, scene_prefix + '.txt'), dtype=np.float32)
   rgb_illuminant /= np.linalg.norm(rgb_illuminant)
   return rgb_illuminant, weight, rgb, extended_feature
 
 
-def get_training_eval_sets(files, cvfolds, test_fold):
+def get_training_eval_sets(files, cv_fold_index, test_fold):
   """Retrieve train and evaluation sets for the current testing fold .
 
   Args:
     files: A list of filenames that should be synched with the cvfolds.
-    cvfolds: A list of corresponding fold number of each filename in 'files'
-    test_fold: Number of testing fold (should be in the range [1-3]).
+    cv_fold_index: A list of corresponding fold number of each filename in
+      'files' for cross validation.
+    test_fold: Index of testing fold (should be in the range [1-3]).
 
   Returns:
     train_set and eval_set, lists of training and evaluation
       filenames, respectively.
   """
-  assert len(files) == len(cvfolds)
-  assert test_fold in range(1,4)
+  assert len(files) == len(cv_fold_index)
+  assert test_fold in range(1, NUM_CROSS_VALIDATION_FOLDS + 1)
   train_folds = list({1, 2, 3} - {test_fold})
   train_set = []
   for train_fold_i in train_folds:
-    train_set = np.append(train_set,
+    train_set = list.append(train_set,
                           np.array(files).transpose()[
-                            (cvfolds == train_fold_i)])
-  train_set = train_set.tolist()
+                            (cv_fold_index == train_fold_i)])
 
-  eval_set = np.array(files)[(cvfolds == test_fold)]
-  eval_set = eval_set.tolist()
+  eval_set = [f for i, f in enumerate(files) if cv_fold_index[i] == test_fold]
   return train_set, eval_set
 
 
@@ -99,7 +101,7 @@ def build_dataset_dict(files, shuffle):
   """Encode training data into input/label dictionaries.
 
   Args:
-    files: full path for scene names
+    files: A list of full paths to dataset images
     shuffle: (Optional) boolean, to shuffle the inputs. Default is True.
   Returns:
     input: a dictionary with the following keys:
@@ -116,7 +118,7 @@ def build_dataset_dict(files, shuffle):
   weight_set = []
   rgb_set = []
   extended_feature_set = []
-  for f in iter(files):
+  for f in files:
     scene = os.path.splitext(os.path.basename(f))[0]
     scene_path = os.path.split(f)[0]
     illuminant, weight, rgb, extended_feature = read_image_data(
@@ -127,7 +129,7 @@ def build_dataset_dict(files, shuffle):
     extended_feature_set.append(extended_feature)
 
   if shuffle:
-    # Fixed the random seed.
+    # Fix the random seed.
     data = list(zip(files, illuminant_set, weight_set,
                     rgb_set, extended_feature_set))
     random.Random(0).shuffle(data)
@@ -153,8 +155,8 @@ def read_dataset_from_dir(path, test_fold, shuffle=True):
   Returns:
     training_input, training_label, eval_input, and eval_label.
     Both training_input and eval_input are training and evaluation
-    data dictionaries, respectively. Each training/evaluation data dictionary
-    has the following keys:
+      data dictionaries, respectively. Each training/evaluation data dictionary
+      has the following keys:
         name: full-path for the image files
         rgb: rgb images (float32)
         extended_feature: extended feature values (float32)
@@ -191,28 +193,27 @@ def read_dataset_from_dir(path, test_fold, shuffle=True):
 
   # check if cvfolds.txt file exists in the root path
   if tf.io.gfile.exists(os.path.join(path, 'cvfolds.txt')):
-    cvfolds = np.loadtxt(os.path.join(path, 'cvfolds.txt'), dtype=np.int)
+    cv_fold_index = np.loadtxt(os.path.join(path, 'cvfolds.txt'), dtype=np.int)
   else:
     # create a 3-fold cross-validation partition and store it in the root path
+    tf.compat.v1.logging.info(
+      'Creating a 3-fold cross-validation partitions and storing their '
+      'indices in the root path.')
     number_of_files = len(image_files)
     indices = np.linspace(0, number_of_files - 1, number_of_files).astype(int)
-    cvfolds = np.zeros(number_of_files).astype(int)
+    cv_fold_index = np.zeros(number_of_files).astype(int)
     random.shuffle(indices)
-    for fold in range(3):
-      cvfolds[indices[np.floor((fold * number_of_files) / 3).astype(int):
-                      np.floor(((fold + 1) * number_of_files) / 3).astype(int)
-              ]] = int(fold + 1)
-    cvfolds_file = open(os.path.join(path, 'cvfolds.txt'), 'w')
-    np.savetxt(cvfolds_file, cvfolds, fmt='%d')
-    cvfolds_file.seek(cvfolds_file.tell() - 1, os.SEEK_SET)
-    cvfolds_file.truncate()
-    cvfolds_file.close()
-
+    for fold in range(NUM_CROSS_VALIDATION_FOLDS):
+      fold_indices = indices[fold * number_of_files // 3:
+                             (fold + 1) * number_of_files // 3]
+      cv_fold_index[fold_indices] = fold + 1
+    with open(os.path.join(path, 'cvfolds.txt'), 'w') as cvfolds_file:
+      np.savetxt(cvfolds_file, cv_fold_index, fmt='%d')
+      cvfolds_file.seek(cvfolds_file.tell() - 1, os.SEEK_SET)
+      cvfolds_file.truncate()
+      cvfolds_file.close()
   training_files, eval_files = get_training_eval_sets(
-    image_files, cvfolds, test_fold)
-
+    image_files, cv_fold_index, test_fold)
   training_input, training_label = build_dataset_dict(training_files, shuffle)
-
   eval_input, eval_label = build_dataset_dict(eval_files, shuffle)
-
   return training_input, training_label, eval_input, eval_label
