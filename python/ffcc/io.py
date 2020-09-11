@@ -209,9 +209,7 @@ def read_dataset_from_dir(path, test_fold, shuffle=True):
       cv_fold_index[fold_indices] = fold + 1
     with open(os.path.join(path, 'cvfolds.txt'), 'w') as cvfolds_file:
       np.savetxt(cvfolds_file, cv_fold_index, fmt='%d')
-      cvfolds_file.seek(cvfolds_file.tell() - 1, os.SEEK_SET)
-      cvfolds_file.truncate()
-      cvfolds_file.close()
+      
   training_files, eval_files = get_training_eval_sets(
     image_files, cv_fold_index, test_fold)
   training_input, training_label = build_dataset_dict(training_files, shuffle)
