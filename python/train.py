@@ -54,6 +54,9 @@ NUM_UPDATES_PER_EPOCH = 10
 # To print the eval results on the latest checkpoint.
 DO_PRINT_EVAL = False
 
+# Number of cross validation folds
+NUM_CROSS_VALIDATION_FOLDS = 3
+
 
 def train_and_eval_fn(params, hparams, train_set, train_label, eval_set,
                       eval_label, model_dir):
@@ -171,7 +174,7 @@ def main(_):
     params = json.load(params_file)
 
   if TEST_FOLD == 0:
-    for test_fold in range(1, io.NUM_CROSS_VALIDATION_FOLDS + 1):
+    for test_fold in range(1, NUM_CROSS_VALIDATION_FOLDS + 1):
       # create sub-directory to stores checkpoints for the current testing fold
       current_model_dir = os.path.join(MODEL_DIR, 'fold%d' % test_fold)
       if not tf.io.gfile.exists(current_model_dir):
@@ -179,7 +182,8 @@ def main(_):
 
       print('Reading data from %s ....\n' % DATA_DIR)
       train_set, train_labels, eval_set, eval_labels = \
-        io.read_dataset_from_dir(DATA_DIR, test_fold)
+        io.read_dataset_from_dir(DATA_DIR, test_fold,
+                                 NUM_CROSS_VALIDATION_FOLDS)
 
       estimator, train_spec, eval_spec = train_and_eval_fn(
         params, hparams, train_set, train_labels, eval_set, eval_labels)
@@ -195,7 +199,7 @@ def main(_):
 
     print('Reading data from %s ....\n' % DATA_DIR)
     train_set, train_label, eval_set, eval_label = io.read_dataset_from_dir(
-      DATA_DIR, TEST_FOLD)
+      DATA_DIR, TEST_FOLD, NUM_CROSS_VALIDATION_FOLDS)
 
     estimator, train_spec, eval_spec = train_and_eval_fn(
       params, hparams, train_set, train_label, eval_set, eval_label,
