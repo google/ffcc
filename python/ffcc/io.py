@@ -87,11 +87,11 @@ def get_training_eval_sets(files, cv_fold_index, test_fold):
   assert len(files) == len(cv_fold_index)
   assert test_fold in range(1, NUM_CROSS_VALIDATION_FOLDS + 1)
   train_folds = list({1, 2, 3} - {test_fold})
-  train_set = []
   for train_fold_i in train_folds:
-    train_set = list.append(train_set,
-                          np.array(files).transpose()[
-                            (cv_fold_index == train_fold_i)])
+    training_indices = cv_fold_index == train_fold_i
+    train_set = [file if index else
+                 [] for file, index in zip(files, training_indices)]
+    train_set = list(filter(None, train_set))
 
   eval_set = [f for i, f in enumerate(files) if cv_fold_index[i] == test_fold]
   return train_set, eval_set
@@ -197,7 +197,7 @@ def read_dataset_from_dir(path, test_fold, shuffle=True):
   else:
     # create a 3-fold cross-validation partition and store it in the root path
     tf.compat.v1.logging.info(
-      'Creating a 3-fold cross-validation partitions and storing their '
+      'Creating 3-fold cross-validation partitions and storing their '
       'indices in the root path.')
     number_of_files = len(image_files)
     indices = np.linspace(0, number_of_files - 1, number_of_files).astype(int)
@@ -209,7 +209,7 @@ def read_dataset_from_dir(path, test_fold, shuffle=True):
       cv_fold_index[fold_indices] = fold + 1
     with open(os.path.join(path, 'cvfolds.txt'), 'w') as cvfolds_file:
       np.savetxt(cvfolds_file, cv_fold_index, fmt='%d')
-      
+
   training_files, eval_files = get_training_eval_sets(
     image_files, cv_fold_index, test_fold)
   training_input, training_label = build_dataset_dict(training_files, shuffle)

@@ -45,6 +45,7 @@ NUM_EPOCHS = 150
 # folds.
 TEST_FOLD = 1
 
+
 # How often should checkpoints and summaries be saved and computed, for each
 # training epoch. Higher numbers will result in more frequent tensorboard
 # updates, at the expense of training efficiency.
@@ -170,7 +171,7 @@ def main(_):
     params = json.load(params_file)
 
   if TEST_FOLD == 0:
-    for test_fold in range(1, 4):
+    for test_fold in range(1, io.NUM_CROSS_VALIDATION_FOLDS + 1):
       # create sub-directory to stores checkpoints for the current testing fold
       current_model_dir = os.path.join(MODEL_DIR, 'fold%d' % test_fold)
       if not tf.io.gfile.exists(current_model_dir):
