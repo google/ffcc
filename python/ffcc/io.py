@@ -22,7 +22,7 @@ import random
 NUM_CROSS_VALIDATION_FOLDS = 3
 
 def read_image_data(scene_prefix, dir_path):
-  r"""Reads scene data from the directory.
+  """Reads scene data from the directory.
 
   Args:
     scene_prefix: scene name (e.g., '000001')
@@ -145,12 +145,14 @@ def build_dataset_dict(files, shuffle):
   return input, label
 
 
-def read_dataset_from_dir(path, test_fold, shuffle=True):
+
+def read_dataset_from_dir(path, test_fold, num_folds, shuffle=True):
   """Read the training data from the given directory and sub-directory(s).
 
   Args:
     path: The root directory of the dataset.
     test_fold: test fold number; should be in the range [1-3].
+    num_folds: number of cross-validation folds
     shuffle: (Optional) boolean, to shuffle the inputs. Default is True.
   Returns:
     training_input, training_label, eval_input, and eval_label.
@@ -203,7 +205,8 @@ def read_dataset_from_dir(path, test_fold, shuffle=True):
     indices = np.linspace(0, number_of_files - 1, number_of_files).astype(int)
     cv_fold_index = np.zeros(number_of_files).astype(int)
     random.shuffle(indices)
-    for fold in range(NUM_CROSS_VALIDATION_FOLDS):
+
+    for fold in range(num_folds):
       fold_indices = indices[fold * number_of_files // 3:
                              (fold + 1) * number_of_files // 3]
       cv_fold_index[fold_indices] = fold + 1
@@ -211,7 +214,7 @@ def read_dataset_from_dir(path, test_fold, shuffle=True):
       np.savetxt(cvfolds_file, cv_fold_index, fmt='%d')
 
   training_files, eval_files = get_training_eval_sets(
-    image_files, cv_fold_index, test_fold)
+    image_files, cv_fold_index, test_fold, num_folds)
   training_input, training_label = build_dataset_dict(training_files, shuffle)
   eval_input, eval_label = build_dataset_dict(eval_files, shuffle)
   return training_input, training_label, eval_input, eval_label
