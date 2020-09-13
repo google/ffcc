@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for fft.py."""
-from . import fft
+from ffcc import fft
 import numpy as np
 from scipy import signal
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 
 
 class FftTest(tf.test.TestCase):

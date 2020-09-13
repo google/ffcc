@@ -15,17 +15,18 @@
 
 import random
 
-from . import ops
+from ffcc import ops
 import numpy as np
 from scipy import signal
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 import tensorflow_probability as tfp
+
 
 
 class OpsTest(tf.test.TestCase):
 
   def _eval(self, tensor, feed_dict=None):
-    with tf.Session() as sess:
+    with tf.compat.v1.Session() as sess:
       return sess.run(tensor, feed_dict=feed_dict)
 
   def setUp(self):

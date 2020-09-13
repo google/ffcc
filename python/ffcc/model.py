@@ -18,12 +18,12 @@ from __future__ import print_function
 
 import sys
 
-from . import ellipse
-from . import fft
-from . import losses
-from . import ops
+from ffcc import ellipse
+from ffcc import fft
+from ffcc import losses
+from ffcc import ops
 import numpy as np
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 
 # This number should match the number of histogram features (e.g. a 64x64xN
 # histogram).
@@ -77,8 +77,9 @@ def evaluate_model(rgb, extended_feature, filters_extended_fft,
         axis=1)
 
   filters_fft = tf.complex(
-      fuse(tf.real(filters_extended_fft), extended_features),
-      fuse(tf.imag(filters_extended_fft), extended_features)) + filters_base_fft
+      fuse(tf.math.real(filters_extended_fft), extended_features),
+      fuse(tf.math.imag(filters_extended_fft), extended_features)) + \
+                filters_base_fft
 
   bias = tf.reduce_sum(
       bias_extended[tf.newaxis, :, :] *
@@ -121,8 +122,8 @@ def evaluate_model(rgb, extended_feature, filters_extended_fft,
   mu, sigma = ops.idx_to_uv(mu_idx, sigma_idx, params['bin_size'],
                             params['first_bin'])
 
-  b_vec = np.asarray(params.ellipse_params.b_vec)
-  w_mat = np.reshape(params.ellipse_params.w_mat, [len(b_vec)] * 2)
+  b_vec = np.asarray(params['ellipse_params']['b_vec'])
+  w_mat = np.reshape(params['ellipse_params']['w_mat'], [len(b_vec)] * 2)
   mu_adjusted = ellipse.project(mu, w_mat, b_vec)
 
   with tf.name_scope('summaries'):
@@ -197,10 +198,10 @@ def latent_to_model(filters_extended_latent, filters_base_latent,
   n = params['nbins']
   precond_filters = tf.cast(
       fft.compute_preconditioner_vec(n, hparams['mult_filters_tv'],
-                                     hparams['mult_filters_l2'], tf.float32))
+                                     hparams['mult_filters_l2']), tf.float32)
   precond_bias = tf.cast(
       fft.compute_preconditioner_vec(n, hparams['mult_bias_tv'],
-                                     hparams['mult_bias_l2'], tf.float32))
+                                     hparams['mult_bias_l2']), tf.float32)
   filters_extended_fft = fft.vec_to_fft2(precond_filters[tf.newaxis, :, :] *
                                          filters_extended_latent)
   filters_base_fft = fft.vec_to_fft2(
@@ -294,9 +295,9 @@ def model_builder(hparams):
       A model_fn_lib.ModelFnOps object that can be called by the estimator.
     """
 
-    tf.logging.info('Run model_fn, mode=%s', mode)
-    tf.logging.info('Params=%s', params)
-    tf.logging.info('HParams=[%s]', hparams)
+    tf.compat.v1.logging.info('Run model_fn, mode=%s', mode)
+    tf.compat.v1.logging.info('Params=%s', params)
+    tf.compat.v1.logging.info('HParams=[%s]', hparams)
 
     # Expect input features is a dictionary
     assert isinstance(features, dict)
@@ -306,15 +307,15 @@ def model_builder(hparams):
 
     n = params['nbins']
     extended_vector_length = params['extended_vector_length']
-    filters_extended_latent = tf.get_variable(
+    filters_extended_latent = tf.compat.v1.get_variable(
         'filters_extended_latent',
         shape=(extended_vector_length, n * n, NUMBER_OF_CHANNELS_FILTERS),
         initializer=tf.zeros_initializer())
-    filters_base_latent = tf.get_variable(
+    filters_base_latent = tf.compat.v1.get_variable(
         'filters_base_latent',
         shape=(n * n, NUMBER_OF_CHANNELS_FILTERS),
         initializer=tf.zeros_initializer())
-    bias_extended_latent = tf.get_variable(
+    bias_extended_latent = tf.compat.v1.get_variable(
         'bias_extended_latent',
         shape=(extended_vector_length, n * n),
         initializer=tf.zeros_initializer())
@@ -332,14 +333,14 @@ def model_builder(hparams):
             tf.convert_to_tensor(bias_base_init)[tf.newaxis, :, :,
                                                  tf.newaxis]))[0] /
                              precond_bias)[:, 0]
-    bias_base_latent = tf.get_variable(
+    bias_base_latent = tf.compat.v1.get_variable(
         'bias_base_latent', initializer=bias_base_latent_init)
 
     with tf.control_dependencies([
-        tf.assert_equal(tf.is_nan(filters_extended_latent), False),
-        tf.assert_equal(tf.is_nan(filters_base_latent), False),
-        tf.assert_equal(tf.is_nan(bias_extended_latent), False),
-        tf.assert_equal(tf.is_nan(bias_base_latent), False)
+        tf.debugging.assert_equal(tf.math.is_nan(filters_extended_latent), False),
+        tf.debugging.assert_equal(tf.math.is_nan(filters_base_latent), False),
+        tf.debugging.assert_equal(tf.math.is_nan(bias_extended_latent), False),
+        tf.debugging.assert_equal(tf.math.is_nan(bias_base_latent), False)
     ]):
       (filters_extended_fft, filters_base_fft, bias_extended_fft, bias_base_fft,
        bias_extended, bias_base, precond_filters,
@@ -367,7 +368,7 @@ def model_builder(hparams):
       assert isinstance(labels, dict)
       true_uv = ops.rgb_to_uv(labels['illuminant'])
 
-      global_step = tf.train.get_global_step()
+      global_step = tf.compat.v1.train.get_global_step()
 
       # The ground-truth white points should lie within the ellipse of valid
       # white points, otherwise something has gone wrong or the ellipse needs
@@ -376,7 +377,7 @@ def model_builder(hparams):
           true_uv, np.reshape(params['ellipse_w_mat'], (2, 2)),
           np.asarray(params['ellipse_b_vec']))
       with tf.control_dependencies(
-          [tf.assert_less_equal(true_ellipse_distance, 1. + 1e-5)]):
+          [tf.debugging.assert_less_equal(true_ellipse_distance, 1. + 1e-5)]):
         (weighted_loss_data, data_losses) = losses.compute_data_loss(
             heatmap,
             mu,
@@ -402,37 +403,38 @@ def model_builder(hparams):
       if mode == tf.estimator.ModeKeys.EVAL:
         eval_metric_ops = {
             'rms_anisotropic_reproduction_error':
-                tf.metrics.root_mean_squared_error(
+                tf.compat.v1.metrics.root_mean_squared_error(
                     predictions=data_losses['anisotropic_reproduction_error'],
                     labels=tf.zeros(
                         tf.shape(
                             data_losses['anisotropic_reproduction_error'])),
                     weights=weight),
             'mean_anisotropic_reproduction_error':
-                tf.metrics.mean(
+                tf.compat.v1.metrics.mean(
                     values=data_losses['anisotropic_reproduction_error'],
                     weights=weight),
             'reproduction_error':
-                tf.metrics.mean(
+                tf.compat.v1.metrics.mean(
                     values=data_losses['reproduction_error'], weights=weight),
             'mean_angular_error':
-                tf.metrics.mean(
+                tf.compat.v1.metrics.mean(
                     values=data_losses['angular_error'], weights=weight),
             'gaussian_nll':
-                tf.metrics.mean(
+                tf.compat.v1.metrics.mean(
                     values=data_losses['gaussian_nll'], weights=weight)
         }
         return tf.estimator.EstimatorSpec(
             mode, loss=loss, eval_metric_ops=eval_metric_ops)
 
       # Smoothly decay from 1 to 0.
-      cosine_decay = tf.train.cosine_decay(1., global_step,
+      cosine_decay = tf.compat.v1.train.cosine_decay(1., global_step,
                                            hparams['total_training_iterations'])
       learning_rate = cosine_decay * hparams['learning_rate']
 
       assert mode == tf.estimator.ModeKeys.TRAIN
-      train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(
-          loss=loss, global_step=global_step)
+      train_op = tf.compat.v1.train.AdamOptimizer(
+        learning_rate=learning_rate).minimize(
+        loss=loss, global_step=global_step)
 
       # Setup summaries
       with tf.name_scope('summaries'):
@@ -459,22 +461,22 @@ def model_builder(hparams):
         tf.summary.histogram(
             'filters_extended_fft',
             tf.stack(
-                [tf.real(filters_extended_fft),
-                 tf.imag(filters_extended_fft)]))
+                [tf.math.real(filters_extended_fft),
+                 tf.math.imag(filters_extended_fft)]))
         tf.summary.histogram(
             'filters_base_fft',
             tf.stack(
-                [tf.real(filters_base_latent),
-                 tf.imag(filters_base_latent)]))
+                [tf.math.real(filters_base_latent),
+                 tf.math.imag(filters_base_latent)]))
         tf.summary.histogram(
             'bias_extended_fft',
             tf.stack(
-                [tf.real(bias_extended_latent),
-                 tf.imag(bias_extended_latent)]))
+                [tf.math.real(bias_extended_latent),
+                 tf.math.imag(bias_extended_latent)]))
         tf.summary.histogram(
             'bias_base_fft',
-            tf.stack([tf.real(bias_base_fft),
-                      tf.imag(bias_base_fft)]))
+            tf.stack([tf.math.real(bias_base_fft),
+                      tf.math.imag(bias_base_fft)]))
 
       return tf.estimator.EstimatorSpec(mode, loss=loss, train_op=train_op)
 

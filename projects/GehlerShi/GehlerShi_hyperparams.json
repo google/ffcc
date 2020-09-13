@@ -1,0 +1,1 @@
+{"learning_rate": 0.1, "mult_bias_l2": 0.9786590347278084, "mult_bias_tv": 82.62230380323528, "mult_filters_l2": [82.82293408957314, 0.01], "mult_filters_tv": [44.455099512660816, 0.01], "batch_size": 32, "mult_smooth": 1e-06}

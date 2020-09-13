@@ -16,10 +16,10 @@ import copy
 import math
 import sys
 
-from . import losses
-from . import ops
+from ffcc import losses
+from ffcc import ops
 import numpy as np
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 
 
 def _normalized(x):
@@ -61,7 +61,7 @@ class SafeArcCosDTest(tf.test.TestCase):
     x = _generate_products(100000)
     with self.session() as sess:
       # Query the angle and the derivative at all points.
-      x_ph = tf.placeholder(x.dtype, len(x))
+      x_ph = tf.compat.v1.placeholder(x.dtype, len(x))
       angle_ph = losses.safe_acosd(x_ph)
       angle, (d_angle) = sess.run(
           (angle_ph, tf.gradients(tf.reduce_sum(angle_ph), x_ph)),
@@ -84,7 +84,7 @@ class SafeArcCosDTest(tf.test.TestCase):
     x = _generate_products(10000)[100:-100]
     with self.session() as sess:
       # Query the derivative at all points.
-      x_ph = tf.placeholder(x.dtype, len(x))
+      x_ph = tf.compat.v1.placeholder(x.dtype, len(x))
       d_angle = sess.run(
           tf.gradients(tf.reduce_sum(losses.safe_acosd(x_ph)), x_ph),
           feed_dict={x_ph: x})[0]
@@ -195,7 +195,7 @@ class ReproductionErrorTest(tf.test.TestCase):
 
     self.assertAllClose(
         losses.reproduction_error(pred_illum_rgb, true_illum_rgb),
-        losses.angular_error(tf.reciprocal(pred_illum_rgb), true_illum_rgb))
+        losses.angular_error(tf.compat.v1.reciprocal(pred_illum_rgb), true_illum_rgb))
 
   def testTintInvariant(self):
     """Tests tint invariant property."""

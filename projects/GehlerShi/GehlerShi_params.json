@@ -1,0 +1,1 @@
+{"first_bin": -0.4375, "nbins": 64, "bin_size": 0.03125, "variance": 0.0833333333, "ellipse_params": {"w_mat": [2.2869704, 0.7841647, 0.7841649, 1.3999774], "b_vec": [-1.2658409, -1.2520925]}, "extended_feature_bins": [0.0], "extended_vector_length": 1}
